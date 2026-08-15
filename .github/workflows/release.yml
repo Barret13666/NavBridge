@@ -1,0 +1,102 @@
+name: Release APK
+
+# Builds the exact same debug APK build.yml does on every push (this project
+# ships an unsigned debug build BY DESIGN -- see README's "Ограничения"
+# section: no release signing key is set up, this is for personal use) and
+# publishes it as a downloadable asset on a proper GitHub Release, instead of
+# a CI artifact you have to dig into the Actions tab (and be logged in) to
+# find. build.yml is untouched and keeps doing its own thing on every push to
+# main -- this is a separate, ADDITIONAL workflow that only runs when you
+# actually want to cut a release.
+#
+# How to use:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# ...and this creates a GitHub Release named "NavBridge v1.0.0" with
+# NavBridge-v1.0.0.apk attached, plus auto-generated release notes (the list of
+# commits since the previous tag).
+#
+# Can also be run by hand from the Actions tab ("Run workflow") without
+# pushing a new tag -- e.g. to re-publish a release after fixing something
+# about the release itself, not the app. When run this way, pick the tag to
+# build from the "Use workflow from" branch/tag dropdown (or fill in the
+# "tag" input below if that's not convenient) -- there has to be an existing
+# tag either way, this workflow doesn't create one for you.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (leave empty to use whatever tag/branch this run was started from)'
+        required: false
+
+# Default GITHUB_TOKEN is read-only unless a job/workflow explicitly asks for
+# more -- "gh release create" below needs write access to create the release
+# and upload its asset.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.ref_name }}"
+          fi
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            echo "::error::No tag to release. Push a tag (git tag v1.0.0 && git push origin v1.0.0), or when running this by hand pick a tag from 'Use workflow from', or fill in the 'tag' input." >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Same build steps as build.yml -- see that file for why each one is
+      # here (no checked-in gradlew, so setup-gradle is what actually
+      # provides a `gradle` command; SDK packages installed explicitly since
+      # setup-android alone doesn't fetch platform/build-tools).
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Rename APK to include the version
+        run: |
+          mkdir -p release
+          cp app/build/outputs/apk/debug/app-debug.apk "release/NavBridge-${{ steps.tag.outputs.tag }}.apk"
+
+      # `gh` is preinstalled on GitHub-hosted runners -- no third-party
+      # action needed just to create a release. --generate-notes asks GitHub
+      # to write the notes itself (commit list since the previous release),
+      # same as clicking "Generate release notes" in the web UI.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            "release/NavBridge-${{ steps.tag.outputs.tag }}.apk" \
+            --title "NavBridge ${{ steps.tag.outputs.tag }}" \
+            --generate-notes
