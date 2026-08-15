@@ -20,8 +20,11 @@
 
     <!-- Android 11+ (API 30+) package visibility: without this, this app
          cannot see or bind to the separately-installed BRouter app's routing
-         service even with an explicit ComponentName -- bindService() would
-         just fail silently. See BRouterClient.kt. -->
+         service even with an explicit ComponentName; bindService() would
+         just fail silently. See BRouterClient.kt.
+         (XML comments can't contain a literal double-hyphen anywhere in the
+         body, not just at the edges; that's what actually broke this build,
+         so this comment and the one above are both written without one.) -->
     <queries>
         <package android:name="btools.routingapp" />
     </queries>
