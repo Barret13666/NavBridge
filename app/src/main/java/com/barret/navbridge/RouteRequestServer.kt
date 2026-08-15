@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -28,6 +29,11 @@ import java.util.Locale
  *                  then ceil(totalPoints/CHUNK_POINTS) packets:
  *                  "RPT1|<reqId>|<seq>|<lat1>,<lon1>;<lat2>,<lon2>;...\n"
  *   out (failure): "RHD1|<reqId>|ERR|<short reason>\n" (final, no data packets)
+ *   in (retry):    "RRS1|<reqId>|<seq>[,<seq>...]\n" -- the board asking for
+ *                  specific RPT1 packets it never received (plain UDP, no
+ *                  delivery guarantee -- a burst of up to ~10 packets back to
+ *                  back is enough to occasionally lose one). Answered from
+ *                  lastRoute below, WITHOUT calling BRouter again.
  */
 class RouteRequestServer(
     private val context: Context,
@@ -41,7 +47,29 @@ class RouteRequestServer(
         const val PORT = 10111
         const val CHUNK_POINTS = 40 // MUST match gps_nav.cpp's NAV_ROUTE_CHUNK_POINTS
         private const val SOCKET_TIMEOUT_MS = 1000
+
+        // Small gap between back-to-back RPT1 sends -- a route can be up to
+        // 10 packets, and sending all of them with zero pacing turned out to
+        // be enough to occasionally overrun the board's UDP receive queue on
+        // a busy WiFi link (that's what the RRS1 resend path below recovers
+        // from, but avoiding the loss in the first place means fewer routes
+        // need recovering at all). 15ms x 10 packets is at most ~150ms added
+        // to a route reply that's already dominated by BRouter's own
+        // multi-second compute time -- not perceptible.
+        private const val CHUNK_SEND_DELAY_MS = 15L
     }
+
+    // The most recently computed route, kept so a "RRS1" resend request can
+    // be answered by re-sending the SAME already-computed RPT1 packets
+    // instead of invoking BRouter a second time (which can itself take
+    // several more seconds -- the resend path only exists to fix lost
+    // packets, not to recompute). Single most-recent-only is enough: the
+    // board only ever has one route request in flight at a time (see
+    // navRouteFetchBusy in gps_nav.cpp).
+    @Volatile
+    private var lastRoute: CachedRoute? = null
+
+    private data class CachedRoute(val reqId: Int, val points: List<Pair<Double, Double>>)
 
     // @Volatile: written from the IO-dispatcher coroutine (runLoop) but read
     // from whatever thread calls stop() (the service's main-thread lifecycle
@@ -95,9 +123,18 @@ class RouteRequestServer(
     }
 
     private suspend fun handleRequest(sock: DatagramSocket, replyAddr: InetAddress, replyPort: Int, text: String) {
-        val parts = text.trim().split("|")
-        if (parts.size != 6 || parts[0] != "RRQ1") {
-            Log.w(TAG, "ignoring unrecognized packet: ${text.take(60)}")
+        val trimmed = text.trim()
+        when {
+            trimmed.startsWith("RRQ1|") -> handleRouteRequest(sock, replyAddr, replyPort, trimmed)
+            trimmed.startsWith("RRS1|") -> handleResendRequest(sock, replyAddr, replyPort, trimmed)
+            else -> Log.w(TAG, "ignoring unrecognized packet: ${trimmed.take(60)}")
+        }
+    }
+
+    private suspend fun handleRouteRequest(sock: DatagramSocket, replyAddr: InetAddress, replyPort: Int, text: String) {
+        val parts = text.split("|")
+        if (parts.size != 6) {
+            Log.w(TAG, "malformed RRQ1: ${text.take(60)}")
             return
         }
         val reqId = parts[1].toIntOrNull()
@@ -106,18 +143,53 @@ class RouteRequestServer(
         val toLat = parts[4].toDoubleOrNull()
         val toLon = parts[5].toDoubleOrNull()
         if (reqId == null || fromLat == null || fromLon == null || toLat == null || toLon == null) {
-            Log.w(TAG, "malformed request: ${text.take(60)}")
+            Log.w(TAG, "malformed RRQ1: ${text.take(60)}")
             return
         }
 
         try {
             val result = BRouterClient.route(context, fromLat, fromLon, toLat, toLon, routingProfile())
+            lastRoute = CachedRoute(reqId, result.points) // cache BEFORE sending -- an RRS1 for this
+                                                            // reqId could arrive while sendChunks is
+                                                            // still working through the list
             sendHeaderOk(sock, replyAddr, replyPort, reqId, result.points.size)
             sendChunks(sock, replyAddr, replyPort, reqId, result.points)
         } catch (e: BRouterClient.RouteException) {
             sendHeaderErr(sock, replyAddr, replyPort, reqId, e.message ?: "unknown error")
         } catch (e: Exception) {
             sendHeaderErr(sock, replyAddr, replyPort, reqId, "internal error: ${e.message}")
+        }
+    }
+
+    // "RRS1|<reqId>|<seq>[,<seq>...]" -- the board re-asking for specific
+    // RPT1 packets it never received. Answered from lastRoute, no BRouter
+    // call. Silently ignored if lastRoute is gone or is for a different,
+    // older reqId (e.g. app process restarted, or GO was tapped again for a
+    // new destination before the old resend timed out on the board) -- the
+    // board's own overall NAV_ROUTE_FETCH_TIMEOUT_MS still bounds how long
+    // it waits either way.
+    private fun handleResendRequest(sock: DatagramSocket, replyAddr: InetAddress, replyPort: Int, text: String) {
+        val parts = text.split("|")
+        if (parts.size != 3) {
+            Log.w(TAG, "malformed RRS1: ${text.take(60)}")
+            return
+        }
+        val reqId = parts[1].toIntOrNull()
+        val route = lastRoute
+        if (reqId == null || route == null || route.reqId != reqId) {
+            Log.w(TAG, "RRS1 for unknown/stale reqId=$reqId (have ${route?.reqId})")
+            return
+        }
+        val seqs = parts[2].split(",").mapNotNull { it.toIntOrNull() }
+        if (seqs.isEmpty()) {
+            Log.w(TAG, "malformed RRS1 seq list: ${text.take(60)}")
+            return
+        }
+        for (seq in seqs) {
+            val start = seq * CHUNK_POINTS
+            if (start >= route.points.size) continue // stale/out-of-range seq -- ignore, not fatal
+            val end = minOf(start + CHUNK_POINTS, route.points.size)
+            send(sock, replyAddr, replyPort, formatChunk(reqId, seq, route.points.subList(start, end)))
         }
     }
 
@@ -132,22 +204,27 @@ class RouteRequestServer(
         send(sock, addr, port, "RHD1|$reqId|ERR|$trimmed\n")
     }
 
-    private fun sendChunks(sock: DatagramSocket, addr: InetAddress, port: Int, reqId: Int, points: List<Pair<Double, Double>>) {
+    private suspend fun sendChunks(sock: DatagramSocket, addr: InetAddress, port: Int, reqId: Int, points: List<Pair<Double, Double>>) {
         var seq = 0
         var i = 0
         while (i < points.size) {
-            val chunk = points.subList(i, minOf(i + CHUNK_POINTS, points.size))
-            val sb = StringBuilder()
-            sb.append("RPT1|").append(reqId).append('|').append(seq).append('|')
-            for ((idx, pt) in chunk.withIndex()) {
-                if (idx > 0) sb.append(';')
-                sb.append(String.format(Locale.US, "%.6f,%.6f", pt.first, pt.second))
-            }
-            sb.append('\n')
-            send(sock, addr, port, sb.toString())
+            val end = minOf(i + CHUNK_POINTS, points.size)
+            send(sock, addr, port, formatChunk(reqId, seq, points.subList(i, end)))
             seq++
             i += CHUNK_POINTS
+            if (i < points.size) delay(CHUNK_SEND_DELAY_MS) // see CHUNK_SEND_DELAY_MS's comment
         }
+    }
+
+    private fun formatChunk(reqId: Int, seq: Int, chunk: List<Pair<Double, Double>>): String {
+        val sb = StringBuilder()
+        sb.append("RPT1|").append(reqId).append('|').append(seq).append('|')
+        for ((idx, pt) in chunk.withIndex()) {
+            if (idx > 0) sb.append(';')
+            sb.append(String.format(Locale.US, "%.6f,%.6f", pt.first, pt.second))
+        }
+        sb.append('\n')
+        return sb.toString()
     }
 
     private fun send(sock: DatagramSocket, addr: InetAddress, port: Int, text: String) {
