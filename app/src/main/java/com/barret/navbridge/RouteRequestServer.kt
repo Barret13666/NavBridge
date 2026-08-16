@@ -24,7 +24,14 @@ import java.util.Locale
  * for the ESP32 side of this; CHUNK_POINTS here MUST match its
  * NAV_ROUTE_CHUNK_POINTS exactly, or the board will only ever see partial
  * routes:
- *   in:  "RRQ1|<reqId>|<fromLat>|<fromLon>|<toLat>|<toLon>\n"
+ *   in:  "RRQ1|<reqId>|<fromLat>|<fromLon>|<toLat>|<toLon>[|<profile>]\n"
+ *                  <profile> (added for the on-screen transport-type button,
+ *                  gps_nav.cpp's navBtnRouteProfile) is OPTIONAL -- older
+ *                  firmware still sending the original 6-field RRQ1 just
+ *                  gets routingProfile() (the MainActivity spinner) as
+ *                  before; a 7-field RRQ1 with <profile> overrides it for
+ *                  that one request. One of BRouterClient's own profile
+ *                  names -- "bicycle" | "motorcar" | "foot".
  *   out (success): "RHD1|<reqId>|OK|<totalPoints>\n"
  *                  then ceil(totalPoints/CHUNK_POINTS) packets:
  *                  "RPT1|<reqId>|<seq>|<lat1>,<lon1>;<lat2>,<lon2>;...\n"
@@ -47,6 +54,10 @@ class RouteRequestServer(
         const val PORT = 10111
         const val CHUNK_POINTS = 40 // MUST match gps_nav.cpp's NAV_ROUTE_CHUNK_POINTS
         private const val SOCKET_TIMEOUT_MS = 1000
+
+        // Must match gps_nav.cpp's NAV_PROFILE_NAMES exactly, and BRouterClient.kt's
+        // own doc comment on the "v" param.
+        private val VALID_ROUTING_PROFILES = setOf("bicycle", "motorcar", "foot")
 
         // Small gap between back-to-back RPT1 sends -- a route can be up to
         // 10 packets, and sending all of them with zero pacing turned out to
@@ -133,7 +144,9 @@ class RouteRequestServer(
 
     private suspend fun handleRouteRequest(sock: DatagramSocket, replyAddr: InetAddress, replyPort: Int, text: String) {
         val parts = text.split("|")
-        if (parts.size != 6) {
+        // 6 fields = the original RRQ1 (no <profile>, older firmware) -- 7 =
+        // the current one with it appended. Anything else is malformed.
+        if (parts.size != 6 && parts.size != 7) {
             Log.w(TAG, "malformed RRQ1: ${text.take(60)}")
             return
         }
@@ -146,9 +159,20 @@ class RouteRequestServer(
             Log.w(TAG, "malformed RRQ1: ${text.take(60)}")
             return
         }
+        // Only trust a value that's actually one of BRouter's own profile
+        // names (see BRouterClient.kt's doc comment on "v") -- anything else
+        // (a stray/garbled packet, or a future firmware sending a name this
+        // APK doesn't know yet) falls back to the spinner instead of handing
+        // BRouter an unrecognized profile string.
+        val requestedProfile = parts.getOrNull(6)
+            ?.takeIf { it in VALID_ROUTING_PROFILES }
+        if (parts.size == 7 && requestedProfile == null) {
+            Log.w(TAG, "RRQ1 profile field ignored (not one of $VALID_ROUTING_PROFILES): ${parts[6]}")
+        }
+        val profile = requestedProfile ?: routingProfile()
 
         try {
-            val result = BRouterClient.route(context, fromLat, fromLon, toLat, toLon, routingProfile())
+            val result = BRouterClient.route(context, fromLat, fromLon, toLat, toLon, profile)
             lastRoute = CachedRoute(reqId, result.points) // cache BEFORE sending -- an RRS1 for this
                                                             // reqId could arrive while sendChunks is
                                                             // still working through the list
