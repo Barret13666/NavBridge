@@ -41,6 +41,25 @@ import java.util.Locale
  *                  delivery guarantee -- a burst of up to ~10 packets back to
  *                  back is enough to occasionally lose one). Answered from
  *                  lastRoute below, WITHOUT calling BRouter again.
+ *
+ * Address search shares this same socket (see gps_nav.cpp's magnifier
+ * button and NAV_SEARCH_* block), answered by PhotonClient rather than
+ * BRouter:
+ *   in:  "SRQ1|<reqId>|<lat>|<lon>|<query text>\n"
+ *                  <lat>/<lon> is the board's current position, passed
+ *                  straight through as Photon's location bias so a nearby
+ *                  match outranks an identically-named one abroad. The
+ *                  query is the LAST field and is NOT escaped, so it may
+ *                  itself contain anything except '|' and '\n' -- parsed
+ *                  with limit=5 on the split for exactly that reason.
+ *   out (success): "SHD1|<reqId>|OK|<count>\n"
+ *                  then <count> packets, one result each:
+ *                  "SRT1|<reqId>|<idx>|<lat>|<lon>|<name>\n"
+ *   out (failure): "SHD1|<reqId>|ERR|<short reason>\n" (final, no results)
+ *
+ * One result per packet, unlike the route's batched RPT1: names are
+ * variable-length and losing a packet then costs one list row instead of
+ * the whole reply, which is why there is no SRS1 resend counterpart.
  */
 class RouteRequestServer(
     private val context: Context,
@@ -123,7 +142,9 @@ class RouteRequestServer(
             } catch (e: Exception) {
                 break // socket closed by stop(), or a genuine error -- either way, exit
             }
-            val text = String(packet.data, 0, packet.length, Charsets.US_ASCII)
+            // UTF-8 to match send() above -- an SRQ1 query typed on the
+            // board's Cyrillic keyboard arrives as multi-byte UTF-8.
+            val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
             val fromAddress = packet.address
             val fromPort = packet.port
             // handleRequest calls BRouter, which can take several seconds --
@@ -138,6 +159,7 @@ class RouteRequestServer(
         when {
             trimmed.startsWith("RRQ1|") -> handleRouteRequest(sock, replyAddr, replyPort, trimmed)
             trimmed.startsWith("RRS1|") -> handleResendRequest(sock, replyAddr, replyPort, trimmed)
+            trimmed.startsWith("SRQ1|") -> handleSearchRequest(sock, replyAddr, replyPort, trimmed)
             else -> Log.w(TAG, "ignoring unrecognized packet: ${trimmed.take(60)}")
         }
     }
@@ -217,6 +239,72 @@ class RouteRequestServer(
         }
     }
 
+    // "SRQ1|<reqId>|<lat>|<lon>|<query>" -- address search, answered via
+    // PhotonClient. Deliberately NOT cached the way lastRoute is: a search
+    // reply is cheap to recompute, the board reissues the whole query on
+    // every keystroke burst anyway, and a stale cached result list would be
+    // actively wrong the moment the user types one more letter.
+    private suspend fun handleSearchRequest(sock: DatagramSocket, replyAddr: InetAddress, replyPort: Int, text: String) {
+        // limit=5: the query is the last field and may legitimately contain
+        // spaces, commas, dots -- everything except '|' (stripped on the way
+        // back out by PhotonClient.buildLabel). Splitting without the limit
+        // would truncate any address containing a pipe-free but otherwise
+        // arbitrary string at the first extra separator.
+        val parts = text.split("|", limit = 5)
+        if (parts.size != 5) {
+            Log.w(TAG, "malformed SRQ1: ${text.take(60)}")
+            return
+        }
+        val reqId = parts[1].toIntOrNull()
+        val lat = parts[2].toDoubleOrNull()
+        val lon = parts[3].toDoubleOrNull()
+        val query = parts[4].trim()
+        if (reqId == null) {
+            Log.w(TAG, "malformed SRQ1 reqId: ${text.take(60)}")
+            return
+        }
+        if (query.isEmpty()) {
+            sendSearchHeaderOk(sock, replyAddr, replyPort, reqId, 0)
+            return
+        }
+        try {
+            // NaN lat/lon (board has no fix yet) is passed straight through
+            // -- PhotonClient treats it as "no location bias" rather than
+            // failing, so search still works before the first fix.
+            val places = PhotonClient.search(
+                query,
+                lat ?: Double.NaN,
+                lon ?: Double.NaN,
+            )
+            sendSearchHeaderOk(sock, replyAddr, replyPort, reqId, places.size)
+            for ((idx, place) in places.withIndex()) {
+                send(sock, replyAddr, replyPort, formatSearchResult(reqId, idx, place))
+                // Same pacing reasoning as CHUNK_SEND_DELAY_MS above: a
+                // back-to-back burst is what overruns the board's UDP queue.
+                if (idx < places.size - 1) delay(CHUNK_SEND_DELAY_MS)
+            }
+        } catch (e: PhotonClient.SearchException) {
+            sendSearchHeaderErr(sock, replyAddr, replyPort, reqId, e.message ?: "search failed")
+        } catch (e: Exception) {
+            sendSearchHeaderErr(sock, replyAddr, replyPort, reqId, "internal error: ${e.message}")
+        }
+    }
+
+    private fun sendSearchHeaderOk(sock: DatagramSocket, addr: InetAddress, port: Int, reqId: Int, count: Int) {
+        send(sock, addr, port, "SHD1|$reqId|OK|$count\n")
+    }
+
+    private fun sendSearchHeaderErr(sock: DatagramSocket, addr: InetAddress, port: Int, reqId: Int, reason: String) {
+        val trimmed = reason.take(60).replace("\n", " ")
+        send(sock, addr, port, "SHD1|$reqId|ERR|$trimmed\n")
+    }
+
+    private fun formatSearchResult(reqId: Int, idx: Int, place: PhotonClient.Place): String =
+        // Locale.US on the coordinates specifically: a phone set to a
+        // comma-decimal locale would otherwise emit "51,107" and the board's
+        // strtod would stop at the comma, silently landing the pin at 51.0.
+        String.format(Locale.US, "SRT1|%d|%d|%.6f|%.6f|%s\n", reqId, idx, place.lat, place.lon, place.name)
+
     private fun sendHeaderOk(sock: DatagramSocket, addr: InetAddress, port: Int, reqId: Int, totalPoints: Int) {
         send(sock, addr, port, "RHD1|$reqId|OK|$totalPoints\n")
     }
@@ -253,7 +341,13 @@ class RouteRequestServer(
 
     private fun send(sock: DatagramSocket, addr: InetAddress, port: Int, text: String) {
         try {
-            val bytes = text.toByteArray(Charsets.US_ASCII)
+            // UTF-8, not US_ASCII as this originally was: SRT1 result names
+            // carry Cyrillic and Polish characters, and US_ASCII silently
+            // replaces every one of them with '?'. Route/RHD1/RPT1 traffic is
+            // pure ASCII digits either way, so widening this is free for
+            // them. The board decodes UTF-8 directly (its search font is
+            // built with those ranges -- see ui_font_nav14.c).
+            val bytes = text.toByteArray(Charsets.UTF_8)
             sock.send(DatagramPacket(bytes, bytes.size, addr, port))
         } catch (e: Exception) {
             Log.e(TAG, "send failed: ${e.message}")
