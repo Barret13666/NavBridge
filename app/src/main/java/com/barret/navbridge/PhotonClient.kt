@@ -203,6 +203,12 @@ object PhotonClient {
 
             var label = buildLabel(props)
 
+            // Drop results the board physically cannot draw -- see
+            // isRenderable(). Done before dedupe so a dropped foreign-script
+            // entry does not occupy one of the four slots or influence the
+            // disambiguation counters.
+            if (!isRenderable(label)) continue
+
             // Same label AND essentially the same spot: one real place
             // indexed twice (a node and its enclosing way, typically).
             // Nothing to choose between them, so keep the first.
@@ -229,6 +235,39 @@ object PhotonClient {
             out.add(Place(lat, lon, sanitize(label)))
         }
         return out
+    }
+
+    /**
+     * True if every character of the label has a glyph in the board's search
+     * font (ui_font_nav14.c). Photon returns names in the LOCAL language of
+     * wherever the result is, so a query of "146K2" happily comes back with
+     * a road in South Korea alongside the Moscow matches -- and on the board
+     * that row rendered as a line of empty boxes, occupying one of only four
+     * result slots.
+     *
+     * MUST be kept in sync with the lv_font_conv range list used to build
+     * ui_font_nav14.c. That font covers European Latin and Cyrillic, which
+     * is the realistic reach of a device that routes with BRouter over
+     * locally downloaded tiles; anything in Hangul, CJK, Arabic, Greek,
+     * Hebrew or Thai is dropped here rather than shipped over UDP to be
+     * drawn as boxes.
+     */
+    private fun isRenderable(label: String): Boolean = label.all { ch ->
+        val c = ch.code
+        when {
+            c == 0x0A || c == 0x0D -> true               // stripped later by sanitize()
+            c in 0x20..0x7F -> true                       // ASCII
+            c in 0xA0..0xFF && c != 0xAD -> true          // Latin-1 supplement (accents, guillemets)
+            c in 0x100..0x17F -> true                     // Latin Extended-A (Polish, Czech, Baltic...)
+            c in 0x400..0x45F -> true                     // Cyrillic
+            c == 0x490 || c == 0x491 -> true              // Ukrainian Ґ/ґ
+            c in 0x2013..0x2014 -> true                   // en/em dash
+            c in 0x2018..0x2019 -> true                   // curly single quotes
+            c in 0x201C..0x201E -> true                   // curly double quotes
+            c == 0x2026 -> true                           // ellipsis
+            c == 0x2116 -> true                           // numero sign, very common in RU addresses
+            else -> false
+        }
     }
 
     /**
