@@ -176,10 +176,19 @@ object PhotonClient {
      * street+housenumber, a POI has name, a city has only name+state -- so
      * the label is assembled from whatever showed up rather than assuming
      * any particular field exists.
+     *
+     * The second pass exists because a query like "ВДНХ" legitimately
+     * returns four DIFFERENT OSM objects -- the metro station, the park, the
+     * exhibition centre, the surrounding district -- that all carry the same
+     * name and the same city, and so all rendered as the identical string
+     * "ВДНХ, Москва". Four indistinguishable rows is not a useful result
+     * list, so near-identical entries are dropped and the rest are given
+     * something that tells them apart.
      */
     private fun parse(body: String): List<Place> {
         val root = JSONObject(body)
         val features = root.optJSONArray("features") ?: return emptyList()
+
         val out = ArrayList<Place>(features.length())
         for (i in 0 until features.length()) {
             val f = features.optJSONObject(i) ?: continue
@@ -191,9 +200,47 @@ object PhotonClient {
             val lat = coords.optDouble(1, Double.NaN)
             if (lat.isNaN() || lon.isNaN()) continue
             val props = f.optJSONObject("properties") ?: JSONObject()
-            out.add(Place(lat, lon, buildLabel(props)))
+
+            var label = buildLabel(props)
+
+            // Same label AND essentially the same spot: one real place
+            // indexed twice (a node and its enclosing way, typically).
+            // Nothing to choose between them, so keep the first.
+            if (out.any { it.name == label && metersBetween(it.lat, it.lon, lat, lon) < 150 }) continue
+
+            // Same label, genuinely different location: add whatever
+            // distinguishes them. district first (it is localized, same as
+            // the name), then street, then the raw OSM tag value -- English,
+            // but "station" vs "attraction" still answers "which ВДНХ?".
+            if (out.any { it.name == label }) {
+                val extra = sequenceOf("district", "street", "osm_value")
+                    .mapNotNull { key -> props.optString(key, "").takeIf { it.isNotBlank() } }
+                    .firstOrNull()
+                if (extra != null) label = "$label - $extra"
+            }
+
+            // Still identical (no distinguishing field at all): number them,
+            // so at least the rows are visibly separate entries rather than
+            // looking like a rendering bug.
+            if (out.any { it.name == label }) {
+                label = "$label (" + (out.count { it.name.startsWith(label) } + 1) + ")"
+            }
+
+            out.add(Place(lat, lon, sanitize(label)))
         }
         return out
+    }
+
+    /**
+     * Equirectangular approximation -- at the ~150m scale this is used for,
+     * the error against a proper haversine is far below the threshold being
+     * tested, and it costs two trig calls instead of six.
+     */
+    private fun metersBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val latRad = Math.toRadians((lat1 + lat2) / 2.0)
+        val dx = Math.toRadians(lon2 - lon1) * Math.cos(latRad)
+        val dy = Math.toRadians(lat2 - lat1)
+        return Math.sqrt(dx * dx + dy * dy) * 6371000.0
     }
 
     private fun buildLabel(p: JSONObject): String {
@@ -216,11 +263,16 @@ object PhotonClient {
             str("state")?.takeIf { it != head },
         ).firstOrNull()
 
-        val label = if (tail != null) "$head, $tail" else head
-        // The wire format is pipe-delimited and newline-terminated, so any
-        // of either inside a name would corrupt the packet on the board.
-        // Stripped here rather than escaped: the board has no unescaper and
-        // OSM names essentially never contain these.
-        return label.replace('|', '/').replace('\n', ' ').replace('\r', ' ').take(MAX_NAME_CHARS)
+        return if (tail != null) "$head, $tail" else head
     }
+
+    /**
+     * The wire format is pipe-delimited and newline-terminated, so either of
+     * those inside a name would corrupt the packet on the board. Stripped
+     * rather than escaped: the board has no unescaper, and OSM names
+     * essentially never contain them. Applied last, after any disambiguation
+     * suffix has been appended, so the length cap covers the final string.
+     */
+    private fun sanitize(label: String): String =
+        label.replace('|', '/').replace('\n', ' ').replace('\r', ' ').take(MAX_NAME_CHARS)
 }
