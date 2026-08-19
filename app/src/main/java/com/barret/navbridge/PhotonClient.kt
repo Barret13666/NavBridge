@@ -69,17 +69,28 @@ object PhotonClient {
     // debounce -- a stuck/garbled board, or a future firmware that forgets
     // to debounce, must not be able to hammer a free public service through
     // this app. Requests arriving inside the window are served late rather
-    // than dropped: at 1/s the user perceives no difference.
-    private const val MIN_INTERVAL_MS = 1000L
+    // than dropped: at this rate the user perceives no difference.
+    private const val MIN_INTERVAL_MS = 1200L
+
+    // After the server actually says 429, back off hard for this long and
+    // answer locally instead of putting more load on a service that has
+    // just asked us to stop. Without it, every subsequent keystroke burst
+    // would still open a connection only to be refused again -- which is
+    // exactly the behaviour that gets an IP blocked rather than throttled.
+    private const val RATE_LIMIT_COOLDOWN_MS = 15_000L
 
     // Photon caps results server-side too; asking for more than the board
     // can display just wastes packets. Must be >= the board's
     // NAV_SEARCH_MAX_RESULTS for the list to ever fill up.
     const val MAX_RESULTS = 8
 
-    // Keeps one result inside a single UDP packet with room to spare, and
-    // matches NAV_SEARCH_NAME_MAX on the board (which truncates anyway).
-    private const val MAX_NAME_CHARS = 63
+    // BYTES, not characters, and that matters: names are sent as UTF-8, where
+    // a Cyrillic letter costs 2 bytes. Capping at 63 CHARACTERS while the
+    // board's buffer held 64 BYTES is what chopped ordinary Russian names
+    // mid-word. 150 leaves margin inside the board's NAV_SEARCH_NAME_MAX of
+    // 160, and one result still fits a single UDP packet with room to spare
+    // (the SRT1 prefix is ~34 bytes against the board's 256-byte rx buffer).
+    private const val MAX_NAME_BYTES = 150
 
     data class Place(val lat: Double, val lon: Double, val name: String)
 
@@ -87,6 +98,9 @@ object PhotonClient {
 
     @Volatile
     private var lastRequestAt = 0L
+
+    @Volatile
+    private var rateLimitedUntil = 0L
 
     /**
      * @param lat/lon current position, used purely as a location bias so
@@ -122,6 +136,12 @@ object PhotonClient {
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
 
+        val now = System.currentTimeMillis()
+        if (now < rateLimitedUntil) {
+            // Fail fast and locally -- no socket is opened at all.
+            throw SearchException("rate limited, retry in ${(rateLimitedUntil - now) / 1000 + 1}s")
+        }
+
         throttle()
 
         val sb = StringBuilder(PHOTON_BASE)
@@ -147,7 +167,10 @@ object PhotonClient {
         }
         try {
             val code = conn.responseCode
-            if (code == 429) throw SearchException("rate limited, slow down")
+            if (code == 429) {
+                rateLimitedUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
+                throw SearchException("rate limited, wait ${RATE_LIMIT_COOLDOWN_MS / 1000}s")
+            }
             if (code !in 200..299) throw SearchException("HTTP $code")
             val body = conn.inputStream.bufferedReader().use(BufferedReader::readText)
             parse(body)
@@ -312,6 +335,16 @@ object PhotonClient {
      * essentially never contain them. Applied last, after any disambiguation
      * suffix has been appended, so the length cap covers the final string.
      */
-    private fun sanitize(label: String): String =
-        label.replace('|', '/').replace('\n', ' ').replace('\r', ' ').take(MAX_NAME_CHARS)
+    private fun sanitize(label: String): String {
+        val clean = label.replace('|', '/').replace('\n', ' ').replace('\r', ' ')
+        val bytes = clean.toByteArray(Charsets.UTF_8)
+        if (bytes.size <= MAX_NAME_BYTES) return clean
+        // Truncate on a CHARACTER boundary, never mid-sequence: cut the byte
+        // array and let the decoder drop whatever partial sequence is left at
+        // the end, rather than shipping a broken one the board would draw as
+        // a stray box.
+        var end = MAX_NAME_BYTES
+        while (end > 0 && (bytes[end].toInt() and 0xC0) == 0x80) end--
+        return String(bytes, 0, end, Charsets.UTF_8)
+    }
 }
