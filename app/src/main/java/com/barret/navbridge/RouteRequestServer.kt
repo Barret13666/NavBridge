@@ -202,8 +202,14 @@ class RouteRequestServer(
                                                             // reqId could arrive while sendChunks is
                                                             // still working through the list
             sendHeaderOk(sock, replyAddr, replyPort, reqId, result.points.size)
-            sendChunks(sock, replyAddr, replyPort, reqId, result.points)
+            // Hints BEFORE the geometry, deliberately. The board's receive
+            // loop exits the moment the last RPT1 chunk completes the route,
+            // so anything sent after that is simply never heard. Sending
+            // them first puts them inside the window the board is already
+            // listening in. They reference point indices, so arriving ahead
+            // of the points they refer to is harmless.
             sendHints(sock, replyAddr, replyPort, reqId, result.hints)
+            sendChunks(sock, replyAddr, replyPort, reqId, result.points)
         } catch (e: BRouterClient.RouteException) {
             sendHeaderErr(sock, replyAddr, replyPort, reqId, e.message ?: "unknown error")
         } catch (e: Exception) {
