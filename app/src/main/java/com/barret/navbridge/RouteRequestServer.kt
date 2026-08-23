@@ -72,6 +72,9 @@ class RouteRequestServer(
         private const val TAG = "RouteRequestServer"
         const val PORT = 10111
         const val CHUNK_POINTS = 40 // MUST match gps_nav.cpp's NAV_ROUTE_CHUNK_POINTS
+        // Hints are ~12 chars each, so 24 keeps an RTI1 packet near 300
+        // bytes -- well inside the board's 512-byte receive buffer.
+        const val HINTS_PER_PACKET = 24 // MUST match gps_nav.cpp's NAV_TURN_CHUNK
         private const val SOCKET_TIMEOUT_MS = 1000
 
         // Must match gps_nav.cpp's NAV_PROFILE_NAMES exactly, and BRouterClient.kt's
@@ -200,10 +203,66 @@ class RouteRequestServer(
                                                             // still working through the list
             sendHeaderOk(sock, replyAddr, replyPort, reqId, result.points.size)
             sendChunks(sock, replyAddr, replyPort, reqId, result.points)
+            sendHints(sock, replyAddr, replyPort, reqId, result.hints)
         } catch (e: BRouterClient.RouteException) {
             sendHeaderErr(sock, replyAddr, replyPort, reqId, e.message ?: "unknown error")
         } catch (e: Exception) {
             sendHeaderErr(sock, replyAddr, replyPort, reqId, "internal error: ${e.message}")
+        }
+    }
+
+    /**
+     * Turn instructions, sent AFTER the polyline.
+     *
+     * Their own header rather than an extra field on RHD1: the board parses
+     * RHD1 with a fixed field count, and widening it would break every
+     * firmware that predates this. A separate RTH1/RTI1 pair is additive --
+     * a board that doesn't know about it ignores two unrecognised packet
+     * types and still draws the route.
+     *
+     *   RTH1|<reqId>|<totalHints>
+     *   RTI1|<reqId>|<seq>|<idx>:<cmd>:<exit>,...     (HINTS_PER_PACKET each)
+     *
+     * Only the point INDEX is sent, not coordinates: the board already has
+     * the polyline, so it can measure the remaining distance along the real
+     * route as you move. BRouter's own distanceToNext is a snapshot from
+     * route time and would be wrong a second later.
+     *
+     * No resend mechanism, unlike RPT1. A route is unusable with a missing
+     * chunk of geometry; it is merely less helpful with one missing arrow,
+     * and the next reroute brings them all back anyway.
+     */
+    private suspend fun sendHints(
+        sock: DatagramSocket,
+        addr: InetAddress,
+        port: Int,
+        reqId: Int,
+        hints: List<BRouterClient.Hint>,
+    ) {
+        // Always send the header, even for zero hints: that is how the board
+        // tells "this route has no turn instructions" apart from "they are
+        // still on their way", and so knows to stop waiting.
+        send(sock, addr, port, "RTH1|$reqId|${hints.size}\n")
+        if (hints.isEmpty()) return
+
+        var seq = 0
+        var i = 0
+        while (i < hints.size) {
+            val end = minOf(i + HINTS_PER_PACKET, hints.size)
+            val sb = StringBuilder()
+            sb.append("RTI1|").append(reqId).append('|').append(seq).append('|')
+            for (j in i until end) {
+                if (j > i) sb.append(',')
+                val h = hints[j]
+                sb.append(h.pointIndex).append(':').append(h.command).append(':').append(h.exitNumber)
+            }
+            sb.append('\n')
+            send(sock, addr, port, sb.toString())
+            // Same pacing as the route chunks -- a back-to-back burst is what
+            // overruns the board's UDP queue.
+            if (end < hints.size) delay(CHUNK_SEND_DELAY_MS)
+            i = end
+            seq++
         }
     }
 

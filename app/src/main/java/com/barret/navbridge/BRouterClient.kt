@@ -7,6 +7,7 @@ import android.content.ServiceConnection
 import android.os.Bundle
 import android.os.IBinder
 import android.os.RemoteException
+import android.util.Log
 import btools.routingapp.IBRouterService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
@@ -29,6 +30,8 @@ import org.json.JSONObject
  */
 object BRouterClient {
 
+    private const val TAG = "BRouterClient"
+
     private const val BROUTER_PACKAGE = "btools.routingapp"
     private const val BROUTER_SERVICE_CLASS = "btools.routingapp.BRouterService"
 
@@ -39,7 +42,10 @@ object BRouterClient {
     private const val MAX_ROUTING_TIME_SECONDS = 25
     private const val OVERALL_TIMEOUT_MS = 28_000L
 
-    data class RouteResult(val points: List<Pair<Double, Double>>) // (lat, lon), in path order
+    data class RouteResult(
+        val points: List<Pair<Double, Double>>,   // (lat, lon), in path order
+        val hints: List<Hint> = emptyList(),      // turn instructions, may be empty
+    )
 
     class RouteException(message: String) : Exception(message)
 
@@ -81,6 +87,23 @@ object BRouterClient {
                 putString("v", profile)
                 putString("fast", "1")
                 putString("trackFormat", "json")
+                // Turn instructions. Without this BRouter returns a bare
+                // polyline -- the hints are computed anyway, just not
+                // emitted. 3 is "osmand style", but the style only affects
+                // GPX output: FormatJson writes the command through
+                // Formatter.getJsonCommandIndex(), which for every mode is
+                // the identity map onto VoiceHint's own constants (C=1,
+                // TL=2, TSLL=3, TSHL=4, TR=5, TSLR=6, TSHR=7, KL=8, KR=9,
+                // TLU=10, TRU=11, OFFR=12, RNDB=13, RNLB=14, TU=15, BL=16,
+                // EL=17, ER=18). So the numbers below are stable whatever
+                // mode is asked for.
+                //
+                // Caveat worth knowing: hints only appear if the PROFILE
+                // also defines priorityclassifier. Stock modern trekking/
+                // car profiles do; an old downloaded profile will silently
+                // return no hints at all, which is why parseHints() logs
+                // the count.
+                putString("turnInstructionMode", "3")
                 putString("maxRunningTime", MAX_ROUTING_TIME_SECONDS.toString())
                 // "pathToFileResult" intentionally omitted -- the AIDL doc's
                 // recommended default for Android Q+ (this app's whole
@@ -181,6 +204,51 @@ object BRouterClient {
             points.add(lat to lon)
         }
         if (points.size < 2) throw RouteException("route has too few points (${points.size})")
-        return RouteResult(points)
+
+        val props = features.getJSONObject(0).optJSONObject("properties")
+        val hints = parseHints(props, points.size)
+        return RouteResult(points, hints)
+    }
+
+    /**
+     * One turn instruction: which track point it sits on, what to do there,
+     * and (roundabouts only) which exit.
+     */
+    data class Hint(val pointIndex: Int, val command: Int, val exitNumber: Int)
+
+    /**
+     * properties.voicehints is an array of arrays, each
+     * [indexInTrack, command, exitNumber, distanceToNext, angle] -- see
+     * FormatJson.java. Only the first three are forwarded to the board: it
+     * already has the polyline, so it can measure distance along the actual
+     * route itself, which stays correct as you move. BRouter's
+     * distanceToNext is fixed at route time and would only be right at the
+     * moment you passed the previous hint.
+     *
+     * Parsed defensively: a missing voicehints key is not an error, it is
+     * what an old profile without priorityclassifier produces, and a route
+     * without turn arrows is still a usable route.
+     */
+    private fun parseHints(props: JSONObject?, pointCount: Int): List<Hint> {
+        val arr = props?.optJSONArray("voicehints")
+        if (arr == null) {
+            Log.i(TAG, "no voicehints in response -- profile may lack priorityclassifier")
+            return emptyList()
+        }
+        val out = ArrayList<Hint>(arr.length())
+        for (i in 0 until arr.length()) {
+            val h = arr.optJSONArray(i) ?: continue
+            if (h.length() < 2) continue
+            val idx = h.optInt(0, -1)
+            val cmd = h.optInt(1, 0)
+            // An index outside the track would make the board look up a
+            // point that doesn't exist; drop rather than clamp, since a hint
+            // at the wrong place is worse than one missing.
+            if (idx < 0 || idx >= pointCount) continue
+            if (cmd <= 0) continue
+            out.add(Hint(idx, cmd, h.optInt(2, 0)))
+        }
+        Log.i(TAG, "voicehints: ${out.size} of ${arr.length()} usable")
+        return out
     }
 }
