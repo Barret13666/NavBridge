@@ -5,7 +5,6 @@ import android.view.MenuItem
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
-import androidx.appcompat.app.AppCompatActivity
 import com.barret.navbridge.databinding.ActivitySettingsBinding
 
 /**
@@ -19,7 +18,7 @@ import com.barret.navbridge.databinding.ActivitySettingsBinding
  * lookup. So a setting changed mid-ride takes effect on the next turn, with no
  * Stop/Start cycle and nothing to forget to confirm.
  */
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : LocaleAwareActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
 

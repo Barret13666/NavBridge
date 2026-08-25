@@ -2,7 +2,6 @@ package com.barret.navbridge
 
 import android.os.Bundle
 import android.view.MenuItem
-import androidx.appcompat.app.AppCompatActivity
 import com.barret.navbridge.databinding.ActivityAboutBinding
 
 /**
@@ -14,7 +13,7 @@ import com.barret.navbridge.databinding.ActivityAboutBinding
  * the dashboard just returns an error, and nothing anywhere else in the app
  * says so.
  */
-class AboutActivity : AppCompatActivity() {
+class AboutActivity : LocaleAwareActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

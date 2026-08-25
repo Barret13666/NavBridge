@@ -14,6 +14,13 @@ import android.app.Application
 class NavBridgeApp : Application() {
     override fun onCreate() {
         super.onCreate()
+
+        // Nothing is written here on first run. The preference is left absent
+        // until the user actually picks a language, and until then
+        // LocaleHelper answers from the phone's own configuration -- so the
+        // app follows the system, and follows it still if the system language
+        // is changed later. Pinning a value at first launch would have quietly
+        // frozen that.
         LocaleHelper.apply(this)
     }
 }

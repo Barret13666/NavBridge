@@ -1,13 +1,11 @@
 <resources>
     <!--
-        DEFAULT locale is English. Russian lives in values-ru/strings.xml.
+        This is the fallback locale: it is what a phone set to any language
+        other than Russian gets. Russian lives in values-ru/strings.xml.
 
-        Which one is used is NOT left to the phone's system language: the
-        language setting writes a per-app locale (see LocaleHelper.kt), so a
-        Russian phone still opens this app in English until you say otherwise.
-        That is deliberate - the firmware, the wire protocol and every log line
-        in this project are in English, and an interface that silently
-        disagrees with them is harder to support.
+        On first run the app follows the phone's own language; after that it
+        follows whatever was picked in Settings, which is stored as a per-app
+        locale (see LocaleHelper.kt).
     -->
     <string name="app_name">NavBridge</string>
     <!-- Name and version on one line. translatable="false": it is two

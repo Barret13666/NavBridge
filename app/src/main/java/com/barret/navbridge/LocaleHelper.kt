@@ -6,13 +6,20 @@ import androidx.core.os.LocaleListCompat
 import java.util.Locale
 
 /**
- * The app's language, chosen in Settings rather than inherited from the phone.
+ * The app's language: the phone's own until somebody chooses otherwise in
+ * Settings, and that choice from then on.
  *
- * English is the default on every device, including a Russian-locale one. That
- * is a deliberate choice, not an oversight: the firmware, the UDP protocol and
- * every log line in this project are English, so an interface that quietly
- * disagrees with them makes a fault harder to describe and harder to fix. A
- * Russian speaker changes it once, in one place, and it sticks.
+ * Following the system until an explicit choice is made means the Settings
+ * spinner always shows the language actually on screen. It did not, briefly:
+ * the default was pinned to English while the resources still resolved to the
+ * system language, so a fresh install on a Russian phone showed a Russian
+ * interface with "English" selected. Both halves were reporting truthfully
+ * from different sources. Reading the same source for both is what fixes it,
+ * and taking that source to be the phone is the least surprising choice --
+ * everything else on the device already works that way.
+ *
+ * Only languages this app actually ships count as a match. A phone set to
+ * German gets English, not a half-translated screen.
  *
  * Applied through AppCompatDelegate.setApplicationLocales, which is the
  * per-app locale API. On Android 13+ it hands the choice to the framework, so
@@ -36,10 +43,29 @@ object LocaleHelper {
     /** BCP-47 tags, index-aligned with R.array.language_labels. */
     val TAGS = listOf("en", "ru")
 
+    /**
+     * The language the app should be in: whatever was chosen in Settings, or
+     * the phone's own language until something is chosen.
+     *
+     * Resources.getSystem() rather than the caller's resources, deliberately.
+     * The caller's configuration has usually been through wrap() already, so
+     * asking it what the "system" language is would just be reading our own
+     * answer back. Resources.getSystem() is the device configuration and is
+     * untouched by per-app locales.
+     */
+    fun systemDefaultTag(): String {
+        val locales = android.content.res.Resources.getSystem().configuration.locales
+        for (i in 0 until locales.size()) {
+            val language = locales.get(i).language
+            if (language in TAGS) return language
+        }
+        return TAGS[0]   // no language we ship -- English, which is the default locale
+    }
+
     fun savedTag(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val tag = prefs.getString(KEY_LANGUAGE, TAGS[0]) ?: TAGS[0]
-        return if (tag in TAGS) tag else TAGS[0]
+        val tag = prefs.getString(KEY_LANGUAGE, null)
+        return if (tag != null && tag in TAGS) tag else systemDefaultTag()
     }
 
     fun savedIndex(context: Context): Int = TAGS.indexOf(savedTag(context)).coerceAtLeast(0)
@@ -53,9 +79,52 @@ object LocaleHelper {
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(tag))
     }
 
-    /** Re-applies the stored choice. Called from Application.onCreate. */
+    /**
+     * Re-asserts the stored choice through the per-app locale API. Called from
+     * Application.onCreate.
+     *
+     * This is what makes the choice visible to the SYSTEM -- it shows up under
+     * Settings > System > Languages > App languages on Android 13+, and
+     * survives independently of this app's own preference. What it is NOT is a
+     * guarantee about the resources of the activity starting right now: on
+     * Android 13+ the call goes to the framework's LocaleManager, which
+     * applies it by restarting the activity, and on a cold first launch the
+     * first screen can be built and shown before that restart happens. Hence
+     * wrap(), below, which does not wait for anybody.
+     */
     fun apply(context: Context) {
         AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags(savedTag(context)))
+    }
+
+    /**
+     * Returns a Context whose resources resolve in the chosen language, for an
+     * Activity to install as its base context before anything is inflated.
+     *
+     * THE BUG THIS FIXES: on a fresh install the Settings screen said English
+     * while every label around it was Russian. Both were reporting honestly --
+     * the spinner reads the saved preference, which defaults to English, while
+     * the labels came from whatever the ACTIVITY's configuration said, which
+     * on a first cold launch was still the phone's system language because the
+     * per-app locale had not taken effect yet. Two sources of truth, one of
+     * them lagging, and the lag is exactly one app launch.
+     *
+     * Overriding the configuration here removes the lag rather than racing it:
+     * the resources are resolved from the preference directly, at
+     * attachBaseContext time, before a single view exists. apply() still runs
+     * for the system integration it provides, and the two agree because they
+     * read the same preference.
+     *
+     * Locale.setDefault as well, so anything that formats without an explicit
+     * locale -- date and number formatting inside library code, mostly -- lines
+     * up with the visible language instead of quietly following the system.
+     */
+    fun wrap(context: Context): Context {
+        val locale = locale(context)
+        Locale.setDefault(locale)
+        val config = android.content.res.Configuration(context.resources.configuration)
+        config.setLocale(locale)
+        config.setLayoutDirection(locale)
+        return context.createConfigurationContext(config)
     }
 
     fun locale(context: Context): Locale = Locale.forLanguageTag(savedTag(context))
