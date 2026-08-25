@@ -13,21 +13,18 @@
     android:gravity="center_horizontal">
 
     <!--
-        Text is set in MainActivity, which appends the installed version (see
-        AppInfo). The literal here is only what the layout preview shows.
+        The name-and-version heading that used to sit here is gone. It repeated
+        the action bar word for word, and once the version was appended the
+        screen said "NavBridge" twice, one line apart, with the only new
+        information tucked into the second copy. The version now goes into the
+        action bar title itself (see MainActivity) - top of the screen, no
+        duplication, and nothing pushed down to make room for it.
     -->
-    <TextView
-        android:id="@+id/tvTitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/app_name"
-        android:textSize="22sp"
-        android:layout_marginBottom="24dp" />
-
     <EditText
         android:id="@+id/etIp"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
         android:hint="@string/hint_ip"
         android:inputType="text" />
 

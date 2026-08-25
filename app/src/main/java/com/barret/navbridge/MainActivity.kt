@@ -34,11 +34,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         prefs = getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE)
 
-        // The heading carries the version, so "which build is on this bike?"
-        // is answerable from the first screen instead of two taps away in
-        // About. Trimmed in case the version comes back empty -- better a
-        // bare name than a name with a dangling space.
-        binding.tvTitle.text = getString(
+        // The version goes in the action bar, which is the topmost thing on
+        // the screen and already says the app's name -- so this adds the one
+        // piece of information that was missing rather than repeating the
+        // name a second time lower down.
+        //
+        // Trimmed because versionLabel() returns an empty string if the
+        // package cannot be read: better a bare name than a name with a
+        // dangling space after it.
+        supportActionBar?.title = getString(
             R.string.title_with_version,
             getString(R.string.app_name),
             AppInfo.versionLabel(this),
