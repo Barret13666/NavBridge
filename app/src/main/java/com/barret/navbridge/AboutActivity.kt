@@ -26,12 +26,7 @@ class AboutActivity : AppCompatActivity() {
             setDisplayHomeAsUpEnabled(true)
         }
 
-        binding.tvVersion.text = try {
-            val info = packageManager.getPackageInfo(packageName, 0)
-            "v${info.versionName}"
-        } catch (e: Exception) {
-            ""
-        }
+        binding.tvVersion.text = AppInfo.versionLabel(this)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

@@ -34,6 +34,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         prefs = getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE)
 
+        // The heading carries the version, so "which build is on this bike?"
+        // is answerable from the first screen instead of two taps away in
+        // About. Trimmed in case the version comes back empty -- better a
+        // bare name than a name with a dangling space.
+        binding.tvTitle.text = getString(
+            R.string.title_with_version,
+            getString(R.string.app_name),
+            AppInfo.versionLabel(this),
+        ).trim()
+
         binding.etIp.setText(prefs.getString("esp32_ip", "192.168.4.1"))
         binding.etPort.setText(prefs.getString("esp32_port", "10110"))
 

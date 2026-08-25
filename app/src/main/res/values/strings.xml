@@ -10,6 +10,9 @@
         disagrees with them is harder to support.
     -->
     <string name="app_name">NavBridge</string>
+    <!-- Name and version on one line. translatable="false": it is two
+         substitutions and a space, with nothing to translate. -->
+    <string name="title_with_version" translatable="false">%1$s %2$s</string>
 
     <!-- main screen -->
     <string name="hint_ip">ESP32 IP address (e.g. 192.168.4.1)</string>
