@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/tvVersion"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textSize="12sp"
+            android:alpha="0.7" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:lineSpacingExtra="3dp"
+            android:textIsSelectable="true"
+            android:text="@string/about_body" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textStyle="bold"
+            android:text="@string/about_source" />
+
+        <!--
+            autoLink turns the URL into a tappable link on its own, so there is
+            no click handler in AboutActivity for this. The URL is shown in
+            full rather than hidden behind a "GitHub" label on purpose: on a
+            phone with no browser set as default, or when someone is reading
+            this over your shoulder, a visible address is still useful and a
+            dead button is not.
+
+            textIsSelectable so it can be copied even if the link itself does
+            not open anywhere.
+        -->
+        <TextView
+            android:id="@+id/tvGithub"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:autoLink="web"
+            android:textIsSelectable="true"
+            android:text="@string/about_github_url" />
+
+    </LinearLayout>
+</ScrollView>

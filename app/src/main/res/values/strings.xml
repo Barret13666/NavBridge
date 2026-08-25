@@ -1,16 +1,91 @@
 <resources>
+    <!--
+        DEFAULT locale is English. Russian lives in values-ru/strings.xml.
+
+        Which one is used is NOT left to the phone's system language: the
+        language setting writes a per-app locale (see LocaleHelper.kt), so a
+        Russian phone still opens this app in English until you say otherwise.
+        That is deliberate - the firmware, the wire protocol and every log line
+        in this project are in English, and an interface that silently
+        disagrees with them is harder to support.
+    -->
     <string name="app_name">NavBridge</string>
-    <string name="hint_ip">ESP32 IP (например 192.168.4.1)</string>
-    <string name="hint_port">UDP порт</string>
-    <string name="start">Старт</string>
-    <string name="stop">Стоп</string>
-    <string name="status_running">Отправка на %1$s:%2$d</string>
-    <string name="status_stopped">Остановлено</string>
-    <string name="status_permission_denied">Нужно разрешение на геолокацию</string>
-    <string name="label_routing_profile">Профиль маршрута (BRouter)</string>
+
+    <!-- main screen -->
+    <string name="hint_ip">ESP32 IP address (e.g. 192.168.4.1)</string>
+    <string name="hint_port">UDP port</string>
+    <string name="start">Start</string>
+    <string name="stop">Stop</string>
+    <string name="status_running">Sending to %1$s:%2$d</string>
+    <string name="status_stopped">Stopped</string>
+    <string name="status_permission_denied">Location permission is required</string>
+    <string name="settings">Settings</string>
+    <string name="about">About NavBridge</string>
+
+    <!-- notification -->
+    <string name="notif_title">NavBridge is running</string>
+    <string name="notif_waiting">waiting for the first fix\u2026</string>
+    <string name="notif_address_error">address error: %1$s</string>
+    <string name="notif_send_error">send error: %1$s</string>
+    <string name="notif_no_permission">no location permission</string>
+
+    <!-- settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="label_routing_profile">Routing profile (BRouter)</string>
+    <string name="label_routing_profile_note">Used for every route the dashboard asks for. The transport button on the dashboard overrides this per request.</string>
+    <string name="label_language">Language</string>
+    <string name="label_language_note">Applies immediately. Voice guidance follows this setting too.</string>
+    <string name="label_cues">Turn guidance</string>
+    <string name="label_cue_mode">Sound</string>
+    <string name="label_cue_mode_note">The dashboard decides when a cue fires, so what you hear always matches the arrow on screen.</string>
+    <string name="label_vibration">Vibration</string>
+    <string name="label_vibration_note">Distinct patterns for left, right and arrival, so a cue is readable through a jacket without looking.</string>
+    <string name="btn_test_cue">Test cue</string>
+
     <string-array name="routing_profile_labels">
-        <item>Электротранспорт / велосипед</item>
-        <item>Автомобиль</item>
-        <item>Пешком</item>
+        <item>Electric transport / bicycle</item>
+        <item>Car</item>
+        <item>On foot</item>
     </string-array>
+
+    <string-array name="language_labels">
+        <item>English</item>
+        <item>Русский</item>
+    </string-array>
+
+    <string-array name="cue_mode_labels">
+        <item>Off</item>
+        <item>Beep only</item>
+        <item>Spoken directions</item>
+    </string-array>
+
+    <!-- Spoken guidance. %1$s is the manoeuvre phrase, %2$d a distance in metres. -->
+    <string name="cue_prepare">In %2$d meters, %1$s</string>
+    <string name="cue_now">%1$s</string>
+    <string name="cue_arrive">You have arrived</string>
+    <string name="cue_reroute">Off route. Recalculating</string>
+    <string name="cue_turn_left">turn left</string>
+    <string name="cue_turn_right">turn right</string>
+    <string name="cue_slight_left">bear left</string>
+    <string name="cue_slight_right">bear right</string>
+    <string name="cue_sharp_left">turn sharp left</string>
+    <string name="cue_sharp_right">turn sharp right</string>
+    <string name="cue_uturn">make a U-turn</string>
+    <string name="cue_keep_left">keep left</string>
+    <string name="cue_keep_right">keep right</string>
+    <string name="cue_roundabout">at the roundabout, go around</string>
+    <string name="cue_roundabout_exit">at the roundabout, take exit %1$d</string>
+    <string name="cue_straight">continue straight</string>
+    <string name="cue_destination">the destination</string>
+
+    <!-- about screen -->
+    <string name="about_title">About NavBridge</string>
+    <string name="about_source">Source code</string>
+    <!--
+        translatable="false": it is a URL, not prose. Marking it stops the
+        build's own translation checks from flagging it as missing in
+        values-ru, and stops anyone from "helpfully" localising a link.
+    -->
+    <string name="about_github_url" translatable="false">https://github.com/Barret13666/NavBridge</string>
+    <string name="about_body">NavBridge is the phone half of a two-part navigation system. The other half is an ESP32-S3 dashboard mounted on the vehicle, which draws the map, the route and the turn arrows. This app gives that dashboard the three things it cannot get on its own: a position, a route, and an address search.\n\nWHAT IT DOES\n\nPosition. Android\u2019s fused location provider (the same one the phone\u2019s own maps app uses \u2014 it blends GNSS with Wi-Fi and cell positioning) is polled about once a second. Each fix is converted to standard NMEA sentences and sent over UDP to the dashboard, which parses them exactly as it would a wired GPS module. This runs as a foreground service so Android keeps it alive with the screen off.\n\nRouting. When you tap a point on the dashboard and press GO, it sends a request over UDP to this app, which asks the separately installed BRouter app to compute the route offline, then streams the polyline and the turn instructions back in small chunks. Nothing about routing needs an internet connection.\n\nAddress search. The magnifier on the dashboard sends the typed text here, and this app queries the public Photon geocoder, biased toward your current position so a nearby match wins over an identically named place abroad. This is the one feature that does need internet.\n\nTurn guidance. The dashboard tells this app when a turn is coming, and the app speaks it and vibrates. The decision is made on the dashboard rather than recomputed here, so what you hear can never disagree with the arrow you are looking at.\n\nWHAT YOU ALSO NEED\n\nBRouter, by abrensch. Free and open source, on F-Droid and Google Play. Install it, open it once, and download the offline routing data for your region \u2014 without that, GO on the dashboard returns an error. NavBridge talks to it through its published service interface; BRouter never has to be in the foreground.\n\nThe dashboard firmware, flashed to an ESP32-S3 display board. It also wants a microSD card: map tiles are cached there, and that cache is what lets the map keep working once you ride out of phone coverage.\n\nA shared network. Phone and board must be on the same Wi-Fi \u2014 in practice the phone\u2019s hotspot, with the board joining it. The IP on the main screen is the board\u2019s address on that network.\n\nMap imagery comes from OpenStreetMap and is cached on the board\u2019s SD card; routing data and geocoding are OpenStreetMap-derived as well. \u00a9 OpenStreetMap contributors.\n\nPRIVACY\n\nYour position goes to two places: the dashboard on your own network, and \u2014 only while you are actively using address search \u2014 the Photon geocoder, as a bias for the query. Nothing is logged, stored or sent anywhere else. Routing never leaves the phone.</string>
 </resources>

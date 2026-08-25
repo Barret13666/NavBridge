@@ -69,28 +69,17 @@ object PhotonClient {
     // debounce -- a stuck/garbled board, or a future firmware that forgets
     // to debounce, must not be able to hammer a free public service through
     // this app. Requests arriving inside the window are served late rather
-    // than dropped: at this rate the user perceives no difference.
-    private const val MIN_INTERVAL_MS = 1200L
-
-    // After the server actually says 429, back off hard for this long and
-    // answer locally instead of putting more load on a service that has
-    // just asked us to stop. Without it, every subsequent keystroke burst
-    // would still open a connection only to be refused again -- which is
-    // exactly the behaviour that gets an IP blocked rather than throttled.
-    private const val RATE_LIMIT_COOLDOWN_MS = 15_000L
+    // than dropped: at 1/s the user perceives no difference.
+    private const val MIN_INTERVAL_MS = 1000L
 
     // Photon caps results server-side too; asking for more than the board
     // can display just wastes packets. Must be >= the board's
     // NAV_SEARCH_MAX_RESULTS for the list to ever fill up.
     const val MAX_RESULTS = 8
 
-    // BYTES, not characters, and that matters: names are sent as UTF-8, where
-    // a Cyrillic letter costs 2 bytes. Capping at 63 CHARACTERS while the
-    // board's buffer held 64 BYTES is what chopped ordinary Russian names
-    // mid-word. 150 leaves margin inside the board's NAV_SEARCH_NAME_MAX of
-    // 160, and one result still fits a single UDP packet with room to spare
-    // (the SRT1 prefix is ~34 bytes against the board's 256-byte rx buffer).
-    private const val MAX_NAME_BYTES = 150
+    // Keeps one result inside a single UDP packet with room to spare, and
+    // matches NAV_SEARCH_NAME_MAX on the board (which truncates anyway).
+    private const val MAX_NAME_CHARS = 63
 
     data class Place(val lat: Double, val lon: Double, val name: String)
 
@@ -98,9 +87,6 @@ object PhotonClient {
 
     @Volatile
     private var lastRequestAt = 0L
-
-    @Volatile
-    private var rateLimitedUntil = 0L
 
     /**
      * @param lat/lon current position, used purely as a location bias so
@@ -136,12 +122,6 @@ object PhotonClient {
         val trimmed = query.trim()
         if (trimmed.length < 2) return@withContext emptyList()
 
-        val now = System.currentTimeMillis()
-        if (now < rateLimitedUntil) {
-            // Fail fast and locally -- no socket is opened at all.
-            throw SearchException("rate limited, retry in ${(rateLimitedUntil - now) / 1000 + 1}s")
-        }
-
         throttle()
 
         val sb = StringBuilder(PHOTON_BASE)
@@ -167,10 +147,7 @@ object PhotonClient {
         }
         try {
             val code = conn.responseCode
-            if (code == 429) {
-                rateLimitedUntil = System.currentTimeMillis() + RATE_LIMIT_COOLDOWN_MS
-                throw SearchException("rate limited, wait ${RATE_LIMIT_COOLDOWN_MS / 1000}s")
-            }
+            if (code == 429) throw SearchException("rate limited, slow down")
             if (code !in 200..299) throw SearchException("HTTP $code")
             val body = conn.inputStream.bufferedReader().use(BufferedReader::readText)
             parse(body)
@@ -226,12 +203,6 @@ object PhotonClient {
 
             var label = buildLabel(props)
 
-            // Drop results the board physically cannot draw -- see
-            // isRenderable(). Done before dedupe so a dropped foreign-script
-            // entry does not occupy one of the four slots or influence the
-            // disambiguation counters.
-            if (!isRenderable(label)) continue
-
             // Same label AND essentially the same spot: one real place
             // indexed twice (a node and its enclosing way, typically).
             // Nothing to choose between them, so keep the first.
@@ -258,39 +229,6 @@ object PhotonClient {
             out.add(Place(lat, lon, sanitize(label)))
         }
         return out
-    }
-
-    /**
-     * True if every character of the label has a glyph in the board's search
-     * font (ui_font_nav14.c). Photon returns names in the LOCAL language of
-     * wherever the result is, so a query of "146K2" happily comes back with
-     * a road in South Korea alongside the Moscow matches -- and on the board
-     * that row rendered as a line of empty boxes, occupying one of only four
-     * result slots.
-     *
-     * MUST be kept in sync with the lv_font_conv range list used to build
-     * ui_font_nav14.c. That font covers European Latin and Cyrillic, which
-     * is the realistic reach of a device that routes with BRouter over
-     * locally downloaded tiles; anything in Hangul, CJK, Arabic, Greek,
-     * Hebrew or Thai is dropped here rather than shipped over UDP to be
-     * drawn as boxes.
-     */
-    private fun isRenderable(label: String): Boolean = label.all { ch ->
-        val c = ch.code
-        when {
-            c == 0x0A || c == 0x0D -> true               // stripped later by sanitize()
-            c in 0x20..0x7F -> true                       // ASCII
-            c in 0xA0..0xFF && c != 0xAD -> true          // Latin-1 supplement (accents, guillemets)
-            c in 0x100..0x17F -> true                     // Latin Extended-A (Polish, Czech, Baltic...)
-            c in 0x400..0x45F -> true                     // Cyrillic
-            c == 0x490 || c == 0x491 -> true              // Ukrainian Ґ/ґ
-            c in 0x2013..0x2014 -> true                   // en/em dash
-            c in 0x2018..0x2019 -> true                   // curly single quotes
-            c in 0x201C..0x201E -> true                   // curly double quotes
-            c == 0x2026 -> true                           // ellipsis
-            c == 0x2116 -> true                           // numero sign, very common in RU addresses
-            else -> false
-        }
     }
 
     /**
@@ -335,16 +273,6 @@ object PhotonClient {
      * essentially never contain them. Applied last, after any disambiguation
      * suffix has been appended, so the length cap covers the final string.
      */
-    private fun sanitize(label: String): String {
-        val clean = label.replace('|', '/').replace('\n', ' ').replace('\r', ' ')
-        val bytes = clean.toByteArray(Charsets.UTF_8)
-        if (bytes.size <= MAX_NAME_BYTES) return clean
-        // Truncate on a CHARACTER boundary, never mid-sequence: cut the byte
-        // array and let the decoder drop whatever partial sequence is left at
-        // the end, rather than shipping a broken one the board would draw as
-        // a stray box.
-        var end = MAX_NAME_BYTES
-        while (end > 0 && (bytes[end].toInt() and 0xC0) == 0x80) end--
-        return String(bytes, 0, end, Charsets.UTF_8)
-    }
+    private fun sanitize(label: String): String =
+        label.replace('|', '/').replace('\n', ' ').replace('\r', ' ').take(MAX_NAME_CHARS)
 }

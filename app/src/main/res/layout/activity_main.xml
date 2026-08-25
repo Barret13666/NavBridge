@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    The routing profile spinner used to live here. It has moved to Settings,
+    along with language and the turn-guidance options: this screen is the one
+    you look at with gloves on, at the roadside, and it should hold nothing but
+    the address of the board and the button that starts the link.
+-->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -28,17 +34,6 @@
         android:hint="@string/hint_port"
         android:inputType="number" />
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:text="@string/label_routing_profile" />
-
-    <Spinner
-        android:id="@+id/spinnerProfile"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content" />
-
     <Button
         android:id="@+id/btnStartStop"
         android:layout_width="match_parent"
@@ -52,5 +47,25 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="24dp"
         android:textAlignment="center" />
+
+    <View
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <Button
+        android:id="@+id/btnSettings"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/settings" />
+
+    <Button
+        android:id="@+id/btnAbout"
+        style="?attr/materialButtonOutlinedStyle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/about" />
 
 </LinearLayout>

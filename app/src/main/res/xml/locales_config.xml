@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares which languages this app ships, so Android 13+ can list it under
+    Settings > System > Languages > App languages. Without this the per-app
+    locale still works from inside the app, but the system has no idea the app
+    is translated and offers the user nothing.
+-->
+<locale-config xmlns:android="http://schemas.android.com/apk/res/android">
+    <locale android:name="en" />
+    <locale android:name="ru" />
+</locale-config>

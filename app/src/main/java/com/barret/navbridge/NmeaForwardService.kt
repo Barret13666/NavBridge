@@ -52,6 +52,23 @@ class NmeaForwardService : Service() {
         @Volatile
         var isRunning = false
             private set
+
+        // The running instance, so the Settings screen can tell it the
+        // language changed. Weak coupling on purpose: a null here just means
+        // forwarding is not running, which is a perfectly normal state for
+        // Settings to be opened in.
+        @Volatile
+        private var instance: NmeaForwardService? = null
+
+        /**
+         * The TTS engine is still pointed at the previous voice after a
+         * language change. Re-resolving it here rather than at the next cue
+         * means the change is audible immediately, and a missing voice pack is
+         * discovered in the car park instead of at a junction.
+         */
+        fun onLanguageChanged() {
+            instance?.announcer?.applyTtsLanguage()
+        }
     }
 
     private lateinit var fusedClient: FusedLocationProviderClient
@@ -68,14 +85,21 @@ class NmeaForwardService : Service() {
     // getting a live GPS feed from this same phone anyway.
     private var routeServer: RouteRequestServer? = null
 
+    // Speaks and vibrates the turn cues the board raises. Owned by the service
+    // rather than by an Activity because cues have to keep working with the
+    // screen off and the app in the background -- which is the entire point of
+    // them.
+    private var announcer: TurnCueAnnouncer? = null
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
     }
 
     private fun routingProfilePref(): String =
-        getSharedPreferences("nmea_bridge", MODE_PRIVATE).getString("routing_profile", "bicycle") ?: "bicycle"
+        getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE).getString("routing_profile", "bicycle") ?: "bicycle"
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -101,10 +125,13 @@ class NmeaForwardService : Service() {
         // Foreground promotion has to happen fast (within a few seconds of
         // startForegroundService()), so do it immediately with a
         // placeholder message, before the address lookup / first fix.
-        startForeground(NOTIFICATION_ID, buildNotification("ожидание первой координаты..."))
+        startForeground(NOTIFICATION_ID, buildNotification(str(R.string.notif_waiting)))
 
+        if (announcer == null) {
+            announcer = TurnCueAnnouncer(applicationContext).also { it.start() }
+        }
         if (routeServer == null) {
-            routeServer = RouteRequestServer(applicationContext) { routingProfilePref() }
+            routeServer = RouteRequestServer(applicationContext, { routingProfilePref() }, announcer)
         }
         routeServer?.start()
 
@@ -113,7 +140,7 @@ class NmeaForwardService : Service() {
                 targetAddress = InetAddress.getByName(ip)
                 udpSocket = DatagramSocket()
             } catch (e: Exception) {
-                updateNotification("ошибка адреса: ${e.message}")
+                updateNotification(str(R.string.notif_address_error, e.message ?: ""))
             }
         }
 
@@ -143,7 +170,7 @@ class NmeaForwardService : Service() {
             fusedClient.requestLocationUpdates(request, locationCallback!!, Looper.getMainLooper())
             isRunning = true
         } catch (e: SecurityException) {
-            updateNotification("нет разрешения на геолокацию")
+            updateNotification(str(R.string.notif_no_permission))
         }
     }
 
@@ -157,7 +184,7 @@ class NmeaForwardService : Service() {
                 val packet = DatagramPacket(bytes, bytes.size, address, port)
                 socket.send(packet)
             } catch (e: Exception) {
-                updateNotification("ошибка отправки: ${e.message}")
+                updateNotification(str(R.string.notif_send_error, e.message ?: ""))
             }
         }
     }
@@ -169,6 +196,8 @@ class NmeaForwardService : Service() {
         udpSocket = null
         routeServer?.stop()
         routeServer = null
+        announcer?.stop()
+        announcer = null
         isRunning = false
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
@@ -176,8 +205,20 @@ class NmeaForwardService : Service() {
     override fun onDestroy() {
         stopForwarding()
         serviceScope.cancel()
+        instance = null
         super.onDestroy()
     }
+
+    /**
+     * Strings in the language chosen in Settings, not the system one.
+     *
+     * A Service's base Context carries the system configuration, so a plain
+     * getString() here would ignore the setting entirely and put the
+     * notification in whatever language the phone happens to be in. See
+     * LocaleHelper.string().
+     */
+    private fun str(resId: Int, vararg args: Any): String =
+        LocaleHelper.string(this, resId, *args)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -200,11 +241,11 @@ class NmeaForwardService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("NavBridge работает")
+            .setContentTitle(str(R.string.notif_title))
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
-            .addAction(R.drawable.ic_notification, "Стоп", stopPendingIntent)
+            .addAction(R.drawable.ic_notification, str(R.string.stop), stopPendingIntent)
             .build()
     }
 

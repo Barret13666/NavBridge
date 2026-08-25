@@ -18,6 +18,11 @@
     <!-- Needed to show the persistent "running" notification on Android 13+ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Needed for the haptic half of turn guidance (TurnCueAnnouncer). This
+         is a normal permission: it is granted at install time and never
+         prompts, so it costs the user nothing. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Android 11+ (API 30+) package visibility: without this, this app
          cannot see or bind to the separately-installed BRouter app's routing
          service even with an explicit ComponentName; bindService() would
@@ -29,10 +34,22 @@
         <package android:name="btools.routingapp" />
     </queries>
 
+    <!-- Android 11+ package visibility, part two: a text-to-speech engine is
+         a separate app, and without this the system cannot tell us which
+         engines are installed, so TextToSpeech would initialise to nothing and
+         every spoken cue would silently downgrade to a beep. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
+        android:name=".NavBridgeApp"
         android:allowBackup="true"
         android:icon="@drawable/ic_notification"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:theme="@style/Theme.Material3.DayNight">
 
         <activity
@@ -44,6 +61,33 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:label="@string/settings_title" />
+
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity"
+            android:label="@string/about_title" />
+
+        <!-- AppCompat's per-app locale storage. On Android 12 and below the
+             framework has no per-app locale concept, so AppCompat persists the
+             choice itself through this service; autoStoreLocales tells it to.
+             On 13+ the framework takes over and this is ignored. Without it,
+             a language chosen here would be forgotten the next time the
+             process started cold. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
 
         <service
             android:name=".NmeaForwardService"

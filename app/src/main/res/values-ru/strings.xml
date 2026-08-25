@@ -1,0 +1,85 @@
+<resources>
+    <!--
+        Russian. Selected by the language setting, never by the system locale
+        alone - see the note in values/strings.xml.
+
+        app_name is deliberately NOT translated: it is the name of the app, it
+        appears in the launcher and in the notification, and transliterating it
+        would only make it harder to find.
+    -->
+
+    <!-- main screen -->
+    <string name="hint_ip">IP адрес ESP32 (например 192.168.4.1)</string>
+    <string name="hint_port">UDP порт</string>
+    <string name="start">Старт</string>
+    <string name="stop">Стоп</string>
+    <string name="status_running">Отправка на %1$s:%2$d</string>
+    <string name="status_stopped">Остановлено</string>
+    <string name="status_permission_denied">Нужно разрешение на геолокацию</string>
+    <string name="settings">Настройки</string>
+    <string name="about">О NavBridge</string>
+
+    <!-- notification -->
+    <string name="notif_title">NavBridge работает</string>
+    <string name="notif_waiting">ожидание первой координаты\u2026</string>
+    <string name="notif_address_error">ошибка адреса: %1$s</string>
+    <string name="notif_send_error">ошибка отправки: %1$s</string>
+    <string name="notif_no_permission">нет разрешения на геолокацию</string>
+
+    <!-- settings screen -->
+    <string name="settings_title">Настройки</string>
+    <string name="label_routing_profile">Профиль маршрута (BRouter)</string>
+    <string name="label_routing_profile_note">Используется для всех маршрутов, которые запрашивает приборка. Кнопка транспорта на приборке переопределяет его для конкретного запроса.</string>
+    <string name="label_language">Язык</string>
+    <string name="label_language_note">Применяется сразу. Голосовые подсказки следуют этой же настройке.</string>
+    <string name="label_cues">Подсказки поворотов</string>
+    <string name="label_cue_mode">Звук</string>
+    <string name="label_cue_mode_note">Момент подсказки решает приборка, поэтому услышанное всегда совпадает со стрелкой на экране.</string>
+    <string name="label_vibration">Вибрация</string>
+    <string name="label_vibration_note">Разные рисунки для левого, правого и финиша — подсказку можно различить через куртку, не глядя на экран.</string>
+    <string name="btn_test_cue">Проверить подсказку</string>
+
+    <string-array name="routing_profile_labels">
+        <item>Электротранспорт / велосипед</item>
+        <item>Автомобиль</item>
+        <item>Пешком</item>
+    </string-array>
+
+    <string-array name="language_labels">
+        <item>English</item>
+        <item>Русский</item>
+    </string-array>
+
+    <string-array name="cue_mode_labels">
+        <item>Выключено</item>
+        <item>Только сигнал</item>
+        <item>Голосовые подсказки</item>
+    </string-array>
+
+    <!--
+        Spoken guidance. The manoeuvre phrases are written to slot into
+        cue_prepare/cue_now as-is, which is why they are lower-case and in the
+        form Russian actually uses out loud ("через 300 метров поверните
+        налево"), not a word-for-word rendering of the English.
+    -->
+    <string name="cue_prepare">Через %2$d метров %1$s</string>
+    <string name="cue_now">%1$s</string>
+    <string name="cue_arrive">Вы прибыли</string>
+    <string name="cue_reroute">Сошли с маршрута. Перестраиваю</string>
+    <string name="cue_turn_left">поверните налево</string>
+    <string name="cue_turn_right">поверните направо</string>
+    <string name="cue_slight_left">держитесь левее</string>
+    <string name="cue_slight_right">держитесь правее</string>
+    <string name="cue_sharp_left">резко налево</string>
+    <string name="cue_sharp_right">резко направо</string>
+    <string name="cue_uturn">развернитесь</string>
+    <string name="cue_keep_left">левее по развилке</string>
+    <string name="cue_keep_right">правее по развилке</string>
+    <string name="cue_roundabout">на кольце продолжайте движение</string>
+    <string name="cue_roundabout_exit">на кольце %1$d-й съезд</string>
+    <string name="cue_straight">продолжайте прямо</string>
+    <string name="cue_destination">пункт назначения</string>
+    <string name="about_title">О NavBridge</string>
+    <string name="about_source">Исходный код</string>
+    <string name="about_body">NavBridge — телефонная половина навигационной системы из двух частей. Вторая половина — приборка на ESP32-S3, установленная на транспорте: она рисует карту, маршрут и стрелки поворотов. Это приложение даёт ей три вещи, которые она не может получить сама: координаты, маршрут и поиск адреса.\n\nЧТО ОНО ДЕЛАЕТ\n\nКоординаты. Примерно раз в секунду опрашивается объединённый поставщик местоположения Android — тот же, которым пользуется штатная карта телефона; он смешивает GNSS с позиционированием по Wi-Fi и вышкам. Каждый фикс превращается в стандартные строки NMEA и уходит по UDP на приборку, которая разбирает их ровно так же, как разбирала бы проводной GPS-модуль. Работает как foreground-сервис, поэтому Android не убивает его при выключенном экране.\n\nМаршрутизация. Когда вы тыкаете точку на приборке и жмёте GO, она отправляет сюда запрос по UDP, а приложение просит отдельно установленный BRouter построить маршрут офлайн и возвращает ломаную и подсказки поворотов небольшими пакетами. Интернет для маршрутизации не нужен вообще.\n\nПоиск адреса. Лупа на приборке присылает сюда набранный текст, приложение обращается к публичному геокодеру Photon со смещением к вашей текущей позиции — чтобы ближайшее совпадение выигрывало у одноимённого места за границей. Это единственная функция, которой нужен интернет.\n\nПодсказки поворотов. Приборка сообщает приложению, что поворот приближается, а приложение произносит его и вибрирует. Решение принимает именно приборка, а не пересчитывает телефон, поэтому услышанное не может разойтись со стрелкой, на которую вы смотрите.\n\nЧТО ЕЩЁ НУЖНО\n\nBRouter, автор abrensch. Бесплатный и открытый, есть на F-Droid и в Google Play. Установите, откройте один раз и скачайте офлайн-данные для своего региона — без них GO на приборке вернёт ошибку. NavBridge общается с ним через его же опубликованный сервисный интерфейс, держать BRouter на переднем плане не требуется.\n\nПрошивка приборки, залитая в плату-дисплей на ESP32-S3. Ей нужна microSD: там кэшируются тайлы карты, и именно этот кэш позволяет карте работать, когда вы уехали из зоны покрытия телефона.\n\nОбщая сеть. Телефон и плата должны быть в одном Wi-Fi — на практике это точка доступа телефона, к которой подключается плата. IP на главном экране — адрес платы в этой сети.\n\nКартинка карты берётся из OpenStreetMap и кэшируется на SD-карте платы; данные маршрутизации и геокодирования тоже производные от OpenStreetMap. \u00a9 участники OpenStreetMap.\n\nПРИВАТНОСТЬ\n\nВаше местоположение уходит в два места: на приборку в вашей же сети и — только пока вы активно пользуетесь поиском адреса — в геокодер Photon, как смещение для запроса. Больше никуда ничего не пишется, не хранится и не отправляется. Маршрутизация вообще не покидает телефон.</string>
+</resources>

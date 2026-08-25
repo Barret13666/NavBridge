@@ -57,6 +57,14 @@ import java.util.Locale
  *                  "SRT1|<reqId>|<idx>|<lat>|<lon>|<name>\n"
  *   out (failure): "SHD1|<reqId>|ERR|<short reason>\n" (final, no results)
  *
+ * Turn cues travel the other way, board to phone, on this same socket. They
+ * are the only inbound packet that gets no reply at all:
+ *   in:  "TCU1|<seq>|<event>|<code>|<exit>|<distM>\n"
+ *        event PREP | NOW | ARRIVE | REROUTE. Every cue is sent TWICE with
+ *        the same <seq> -- see the note in gps_nav.cpp; the duplicate is
+ *        dropped by TurnCueAnnouncer, not here, because that is where the
+ *        sequence number is tracked.
+ *
  * One result per packet, unlike the route's batched RPT1: names are
  * variable-length and losing a packet then costs one list row instead of
  * the whole reply, which is why there is no SRS1 resend counterpart.
@@ -64,9 +72,12 @@ import java.util.Locale
 class RouteRequestServer(
     private val context: Context,
     // Read fresh on every request (not captured once at start()) so a
-    // profile change in MainActivity's spinner takes effect on the very
+    // profile change in the Settings spinner takes effect on the very
     // next tap-GO, without needing to restart the foreground service.
     private val routingProfile: () -> String,
+    // Plays turn cues raised by the board (TCU1). Nullable so the server
+    // still runs on a build with no announcer wired up.
+    private val cueAnnouncer: TurnCueAnnouncer? = null,
 ) {
     companion object {
         private const val TAG = "RouteRequestServer"
@@ -163,6 +174,16 @@ class RouteRequestServer(
             trimmed.startsWith("RRQ1|") -> handleRouteRequest(sock, replyAddr, replyPort, trimmed)
             trimmed.startsWith("RRS1|") -> handleResendRequest(sock, replyAddr, replyPort, trimmed)
             trimmed.startsWith("SRQ1|") -> handleSearchRequest(sock, replyAddr, replyPort, trimmed)
+            // Turn cue from the board -- audio and haptics only, nothing is
+            // sent back. It arrives on this socket rather than a port of its
+            // own because this is already the socket the board talks to, and
+            // adding a second listener would mean a second bind, a second
+            // firewall consideration and a second thing to get wrong.
+            trimmed.startsWith("TCU1|") -> {
+                if (cueAnnouncer?.handleCuePacket(trimmed) != true) {
+                    Log.w(TAG, "malformed TCU1: ${trimmed.take(60)}")
+                }
+            }
             else -> Log.w(TAG, "ignoring unrecognized packet: ${trimmed.take(60)}")
         }
     }

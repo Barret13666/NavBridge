@@ -6,9 +6,6 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -18,11 +15,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: SharedPreferences
-
-    // BRouter's own profile names (see IBRouterService.aidl's "v" param) --
-    // index must line up with R.array.routing_profile_labels, position for
-    // position.
-    private val routingProfileValues = listOf("bicycle", "motorcar", "foot")
 
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -40,11 +32,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        prefs = getSharedPreferences("nmea_bridge", MODE_PRIVATE)
+        prefs = getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE)
 
         binding.etIp.setText(prefs.getString("esp32_ip", "192.168.4.1"))
         binding.etPort.setText(prefs.getString("esp32_port", "10110"))
-        setupProfileSpinner()
 
         updateButtonLabel(NmeaForwardService.isRunning)
 
@@ -56,6 +47,16 @@ class MainActivity : AppCompatActivity() {
                 ensurePermissionsThenStart()
             }
         }
+
+        // The routing profile lives in Settings now, alongside language and
+        // turn guidance -- see the comment in activity_main.xml for why this
+        // screen was stripped back to the address and the start button.
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        binding.btnAbout.setOnClickListener {
+            startActivity(Intent(this, AboutActivity::class.java))
+        }
     }
 
     override fun onResume() {
@@ -64,35 +65,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveSettings() {
-        val profileIdx = binding.spinnerProfile.selectedItemPosition
-            .coerceIn(0, routingProfileValues.size - 1)
         prefs.edit()
             .putString("esp32_ip", binding.etIp.text.toString().trim())
             .putString("esp32_port", binding.etPort.text.toString().trim())
-            .putString("routing_profile", routingProfileValues[profileIdx])
             .apply()
-    }
-
-    private fun setupProfileSpinner() {
-        val labels = resources.getStringArray(R.array.routing_profile_labels)
-        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        binding.spinnerProfile.adapter = adapter
-        val saved = prefs.getString("routing_profile", "bicycle") ?: "bicycle"
-        val idx = routingProfileValues.indexOf(saved).let { if (it < 0) 0 else it }
-        binding.spinnerProfile.setSelection(idx)
-
-        // Persisted immediately on change (not just on Start) -- the
-        // service reads this pref fresh per route request (see
-        // NmeaForwardService.routingProfilePref()), so a profile switch
-        // made WHILE already running takes effect on the very next tap-GO
-        // without a Stop/Start cycle.
-        binding.spinnerProfile.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                prefs.edit().putString("routing_profile", routingProfileValues[position]).apply()
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
     }
 
     private fun ensurePermissionsThenStart() {
