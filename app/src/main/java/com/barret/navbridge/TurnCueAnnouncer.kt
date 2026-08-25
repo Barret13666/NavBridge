@@ -1,5 +1,8 @@
 package com.barret.navbridge
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
@@ -14,6 +17,8 @@ import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import java.util.Locale
 
 /**
@@ -49,6 +54,18 @@ class TurnCueAnnouncer(private val context: Context) {
         const val PREFS = "nmea_bridge"
         const val KEY_CUE_MODE = "cue_mode"        // 0 off, 1 beep, 2 speech
         const val KEY_VIBRATION = "cue_vibration"  // boolean
+        const val KEY_NOTIFY = "cue_notify"        // boolean -- mirror to a band/watch
+
+        private const val CUE_CHANNEL_ID = "turn_cues"
+        // One id, reused. Each cue REPLACES the previous one rather than
+        // stacking: a band with four stale "Left" cards on it is worse than
+        // no cue at all, and only the newest was ever true anyway.
+        private const val CUE_NOTIFICATION_ID = 2
+
+        // How long a cue card lives before Android removes it by itself. A
+        // cue is only true for as long as the turn is ahead of you; left on
+        // the wrist afterwards it is actively misleading.
+        private const val CUE_TIMEOUT_MS = 45_000L
 
         const val MODE_OFF = 0
         const val MODE_BEEP = 1
@@ -97,6 +114,7 @@ class TurnCueAnnouncer(private val context: Context) {
     }
 
     fun start() {
+        createCueChannel()
         if (tts != null) return
         // TextToSpeech construction must not happen on an arbitrary thread --
         // the callback comes back on the main looper and the engine binds a
@@ -123,6 +141,7 @@ class TurnCueAnnouncer(private val context: Context) {
     }
 
     fun stop() {
+        cancelNotification()
         abandonFocus()
         tts?.stop()
         tts?.shutdown()
@@ -179,6 +198,11 @@ class TurnCueAnnouncer(private val context: Context) {
         val vibrate = prefs.getBoolean(KEY_VIBRATION, true)
 
         if (vibrate) vibrateFor(event, code)
+        if (prefs.getBoolean(KEY_NOTIFY, true)) notify(event, code, exit, dist)
+
+        // Note this is AFTER the notification, not before: the wrist cue is
+        // the one that still has to arrive when the sound is switched off --
+        // that is the whole point of riding with a band instead of a headset.
         if (mode == MODE_OFF) return
 
         if (mode == MODE_SPEECH && ttsReady) {
@@ -309,6 +333,120 @@ class TurnCueAnnouncer(private val context: Context) {
             Log.w(TAG, "vibrate failed: ${e.message}")
         }
     }
+
+    /**
+     * Posts the cue as a notification, which is how it reaches a Mi Band or a
+     * smartwatch: those do not know this app exists, they mirror whatever the
+     * phone posts. So the notification is not a phone feature that happens to
+     * be visible on the wrist -- it IS the wrist feature.
+     *
+     * Deliberately silent and vibration-free at the channel level. The phone
+     * has already been told to speak and buzz by the code above, and letting
+     * the notification do it again would double every cue. The band does its
+     * own buzz when it receives the mirror, which is the one you actually feel
+     * with the phone in a pocket.
+     *
+     * Importance is HIGH all the same: several band companion apps only
+     * forward notifications the system considers interruptive, and a LOW
+     * channel is silently dropped by them.
+     */
+    private fun notify(event: String, code: String, exit: Int, dist: Int) {
+        val text = shortLineFor(event, code, exit, dist)
+
+        val notification = NotificationCompat.Builder(context, CUE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            // The whole cue goes in the TITLE and nothing in the body: band
+            // companions concatenate the two, and a short single line survives
+            // a 20-character screen where "NavBridge / Left / 300 m" does not.
+            .setContentTitle(text)
+            .setTicker(text)
+            .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSilent(true)
+            .setOnlyAlertOnce(false)
+            .setAutoCancel(true)
+            .setTimeoutAfter(CUE_TIMEOUT_MS)
+            .setDefaults(0)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(CUE_NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            // POST_NOTIFICATIONS refused on Android 13+. Nothing to do about
+            // it here, and nothing worth interrupting the ride over -- the
+            // spoken and haptic cues carry on regardless.
+            Log.w(TAG, "cue notification blocked: ${e.message}")
+        }
+    }
+
+    private fun cancelNotification() {
+        try {
+            NotificationManagerCompat.from(context).cancel(CUE_NOTIFICATION_ID)
+        } catch (e: Exception) {
+            // nothing posted, or no permission -- either way there is nothing to clear
+        }
+    }
+
+    private fun createCueChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channel = NotificationChannel(
+            CUE_CHANNEL_ID,
+            LocaleHelper.string(context, R.string.notif_channel_cues),
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+            enableLights(false)
+            setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    /**
+     * "Left \u00b7 300 m" -- one word for the direction, then how far.
+     *
+     * Not the spoken phrase shortened: that one is a sentence ("turn left"),
+     * and a sentence on a wrist is something you read rather than glance at.
+     * Slight, sharp and keep-left all collapse to plain Left here, because at
+     * a glance the side is the decision and the severity is detail you will
+     * have from the road itself by the time it matters.
+     */
+    private fun shortLineFor(event: String, code: String, exit: Int, dist: Int): String {
+        if (event == "ARRIVE") return LocaleHelper.string(context, R.string.cue_short_arrive)
+        if (event == "REROUTE") return LocaleHelper.string(context, R.string.cue_short_reroute)
+
+        var direction = when (code) {
+            "left", "sll", "shl", "keepl" -> LocaleHelper.string(context, R.string.cue_short_left)
+            "right", "slr", "shr", "keepr" -> LocaleHelper.string(context, R.string.cue_short_right)
+            "uturn" -> LocaleHelper.string(context, R.string.cue_short_uturn)
+            "rndb" -> LocaleHelper.string(context, R.string.cue_short_roundabout)
+            "dest" -> LocaleHelper.string(context, R.string.cue_short_destination)
+            else -> LocaleHelper.string(context, R.string.cue_short_straight)
+        }
+        // The exit number is the one extra digit worth the space it takes:
+        // "Roundabout 2" is a usable instruction, "Roundabout" is not.
+        if (code == "rndb" && exit > 0) direction = "$direction $exit"
+
+        val distanceText = if (event == "NOW") {
+            LocaleHelper.string(context, R.string.notif_cue_now)
+        } else {
+            formatDistance(roundDistance(dist))
+        }
+        return LocaleHelper.string(context, R.string.notif_cue_format, direction, distanceText)
+    }
+
+    private fun formatDistance(meters: Int): String =
+        if (meters >= 1000) {
+            // One decimal, and a dot rather than the locale separator: this is
+            // read at a glance on a small screen, not parsed.
+            val km = meters / 1000.0
+            LocaleHelper.string(context, R.string.notif_dist_km, String.format(Locale.US, "%.1f", km))
+        } else {
+            LocaleHelper.string(context, R.string.notif_dist_m, meters)
+        }
 
     private fun requestFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

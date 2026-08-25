@@ -135,6 +135,14 @@ class SettingsActivity : AppCompatActivity() {
             prefs().edit().putBoolean(TurnCueAnnouncer.KEY_VIBRATION, checked).apply()
         }
 
+        // Default on: this is the only cue that reaches a wrist, and the
+        // notification is silent on the phone, so leaving it enabled costs a
+        // rider who does not own a band nothing they will notice.
+        binding.switchNotify.isChecked = prefs().getBoolean(TurnCueAnnouncer.KEY_NOTIFY, true)
+        binding.switchNotify.setOnCheckedChangeListener { _, checked ->
+            prefs().edit().putBoolean(TurnCueAnnouncer.KEY_NOTIFY, checked).apply()
+        }
+
         // A real cue, through the real path, with the settings as they stand.
         // Turn guidance is the one feature here that cannot be verified from
         // an armchair -- without this you would have to go and ride to a

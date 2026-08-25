@@ -98,6 +98,21 @@
             android:alpha="0.7"
             android:text="@string/label_vibration_note" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/switchNotify"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/label_notify" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textSize="12sp"
+            android:alpha="0.7"
+            android:text="@string/label_notify_note" />
+
         <Button
             android:id="@+id/btnTestCue"
             style="?attr/materialButtonOutlinedStyle"

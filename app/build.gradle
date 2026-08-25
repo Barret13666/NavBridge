@@ -3,6 +3,67 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// ---------------------------------------------------------------------------
+// Version, taken from the git tag rather than typed in here
+// ---------------------------------------------------------------------------
+//
+// Releases are cut by pushing a tag (git tag v1.0.4 && git push origin v1.0.4)
+// and release.yml names the APK and the GitHub Release after it. The version
+// INSIDE the app used to be a separate hand-edited literal, so the only thing
+// keeping the two in agreement was remembering to edit both -- which is why
+// an APK downloaded as v1.0.4 still said v1.0 on its About screen.
+//
+// Two sources, in priority order:
+//
+//   1. -PversionName=..., which the release workflow passes with the tag it
+//      already resolved. This is the authoritative one for a real release:
+//      it is the SAME string used to name the APK, so they cannot disagree.
+//   2. `git describe`, for local builds and for build.yml's untagged pushes.
+//      Between tags this yields something like 1.0.4-7-gabc1234 (seven commits
+//      past v1.0.4) and appends -dirty for uncommitted changes, which is
+//      exactly what you want to see on a test build -- an APK claiming to be
+//      a clean 1.0.4 when it is not is worse than one admitting it is not.
+//
+// Falls back to 0.0.0-dev when neither is available (a source zip with no git
+// history, say) rather than failing the build.
+def resolveVersionName = { ->
+    def fromProperty = project.findProperty('versionName')
+    if (fromProperty) {
+        return fromProperty.toString().trim().replaceFirst(/^v/, '')
+    }
+    try {
+        def stdout = new ByteArrayOutputStream()
+        def result = exec {
+            commandLine 'git', 'describe', '--tags', '--dirty', '--always'
+            standardOutput = stdout
+            errorOutput = new ByteArrayOutputStream()
+            ignoreExitValue = true
+        }
+        if (result.exitValue == 0) {
+            def described = stdout.toString().trim()
+            if (described) return described.replaceFirst(/^v/, '')
+        }
+    } catch (Exception ignored) {
+        // no git, or not a repository -- fall through
+    }
+    return '0.0.0-dev'
+}
+
+// versionCode has to be a single increasing integer, so the three parts are
+// packed as major*10000 + minor*100 + patch. That keeps ordering correct for
+// anything up to x.99.99 and, unlike a build counter, gives the same number
+// for the same tag no matter where it is built.
+def resolveVersionCode = { String name ->
+    def matcher = (name =~ /^(\d+)\.(\d+)(?:\.(\d+))?/)
+    if (!matcher.find()) return 1
+    def major = matcher.group(1).toInteger()
+    def minor = matcher.group(2).toInteger()
+    def patch = (matcher.group(3) ?: '0').toInteger()
+    return major * 10000 + minor * 100 + patch
+}
+
+def navBridgeVersionName = resolveVersionName()
+
 android {
     namespace 'com.barret.navbridge'
     compileSdk 34
@@ -11,8 +72,8 @@ android {
         applicationId "com.barret.navbridge"
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName "1.0.4"
+        versionCode resolveVersionCode(navBridgeVersionName)
+        versionName navBridgeVersionName
     }
 
     buildTypes {
