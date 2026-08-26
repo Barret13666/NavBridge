@@ -67,6 +67,11 @@ class TurnCueAnnouncer(private val context: Context) {
         // the wrist afterwards it is actively misleading.
         private const val CUE_TIMEOUT_MS = 45_000L
 
+        // Utterance ids. They exist to tell the progress callbacks WHICH cue
+        // just started or finished, which is what rerouteSpeaking is tracking.
+        private const val UTTERANCE_CUE = "navbridge-cue"
+        private const val UTTERANCE_REROUTE = "navbridge-reroute"
+
         const val MODE_OFF = 0
         const val MODE_BEEP = 1
         const val MODE_SPEECH = 2
@@ -95,6 +100,18 @@ class TurnCueAnnouncer(private val context: Context) {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var focusRequest: AudioFocusRequest? = null
+
+    // True while a "off route, recalculating" utterance is actually playing.
+    //
+    // Everything else here interrupts whatever is speaking, which is right for
+    // turn cues -- see speak(). It is wrong for this one. A reroute
+    // announcement is immediately followed by a route landing and a fresh
+    // turn cue firing off it, usually within a second or two, so the reroute
+    // was reliably cut off mid-word and you were told to turn without ever
+    // being told the route had changed underneath you. That is the one piece
+    // of information you cannot infer from the instruction that follows it.
+    @Volatile
+    private var rerouteSpeaking = false
 
     // Duplicate suppression. The board sends every cue TWICE on purpose (plain
     // UDP, no resend path for something this time-critical), so the second
@@ -132,16 +149,28 @@ class TurnCueAnnouncer(private val context: Context) {
                 }
             }
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-                override fun onDone(utteranceId: String?) = abandonFocus()
+                override fun onStart(utteranceId: String?) {
+                    rerouteSpeaking = (utteranceId == UTTERANCE_REROUTE)
+                }
+                override fun onDone(utteranceId: String?) = finished(utteranceId)
                 @Deprecated("required override")
-                override fun onError(utteranceId: String?) = abandonFocus()
+                override fun onError(utteranceId: String?) = finished(utteranceId)
+
+                private fun finished(utteranceId: String?) {
+                    // Only clear the flag for the utterance that set it. With
+                    // QUEUE_ADD there can be a turn cue finishing behind the
+                    // reroute, and letting its onDone clear the flag would
+                    // reopen the interruption this exists to prevent.
+                    if (utteranceId == UTTERANCE_REROUTE) rerouteSpeaking = false
+                    abandonFocus()
+                }
             })
         }
     }
 
     fun stop() {
         cancelNotification()
+        rerouteSpeaking = false
         abandonFocus()
         tts?.stop()
         tts?.shutdown()
@@ -206,7 +235,7 @@ class TurnCueAnnouncer(private val context: Context) {
         if (mode == MODE_OFF) return
 
         if (mode == MODE_SPEECH && ttsReady) {
-            speak(phraseFor(event, code, exit, dist))
+            speak(phraseFor(event, code, exit, dist), event)
         } else {
             beep(event)
         }
@@ -259,14 +288,29 @@ class TurnCueAnnouncer(private val context: Context) {
         else -> (dist / 10) * 10
     }
 
-    private fun speak(text: String) {
+    private fun speak(text: String, event: String) {
         val engine = tts ?: return
         requestFocus()
-        // QUEUE_FLUSH, not QUEUE_ADD: if a cue is still being spoken when the
-        // next one fires, the new one is the one that matters. Queueing would
-        // mean hearing "in three hundred meters, turn left" while already IN
-        // the turn.
-        engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "navbridge-cue")
+
+        // QUEUE_FLUSH by default: if a cue is still being spoken when the next
+        // one fires, the new one is the one that matters. Queueing everything
+        // would mean hearing "in three hundred meters, turn left" while
+        // already IN the turn.
+        //
+        // The exception is a reroute announcement in progress. It is short,
+        // it is the only cue that explains WHY the instructions are about to
+        // change, and the thing that interrupts it is invariably the first
+        // turn cue of the new route -- so flushing here reliably destroyed the
+        // context for the instruction that replaced it. Anything arriving on
+        // top of a reroute waits its turn instead; a second later at most.
+        val mode = if (rerouteSpeaking && event != "REROUTE") {
+            TextToSpeech.QUEUE_ADD
+        } else {
+            TextToSpeech.QUEUE_FLUSH
+        }
+
+        val id = if (event == "REROUTE") UTTERANCE_REROUTE else UTTERANCE_CUE
+        engine.speak(text, mode, null, id)
     }
 
     private fun beep(event: String) {
