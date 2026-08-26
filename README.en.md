@@ -1,6 +1,8 @@
 <p align="right">
   <a href="README.md"><img alt="Русский" src="https://img.shields.io/badge/%D1%8F%D0%B7%D1%8B%D0%BA-%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-6e7681?style=for-the-badge"></a>
   <a href="README.en.md"><img alt="English" src="https://img.shields.io/badge/lang-English-2f6feb?style=for-the-badge"></a>
+  &nbsp;
+  <a href="../../releases"><img alt="Releases" src="https://img.shields.io/github/v/release/Barret13666/NavBridge?style=for-the-badge&logo=android&logoColor=white&label=download&color=2ea043"></a>
 </p>
 
 # NavBridge
