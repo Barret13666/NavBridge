@@ -4,12 +4,20 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.Manifest
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.GnssStatus
+import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -48,6 +56,8 @@ class NmeaForwardService : Service() {
         const val EXTRA_PORT = "port"
         private const val CHANNEL_ID = "nmea_bridge_channel"
         private const val NOTIFICATION_ID = 1
+
+        private const val TAG = "NmeaForwardService"
 
         @Volatile
         var isRunning = false
@@ -90,6 +100,22 @@ class NmeaForwardService : Service() {
     // screen off and the app in the background -- which is the entire point of
     // them.
     private var announcer: TurnCueAnnouncer? = null
+
+    // Real satellite count, for the dashboard's satellite chip.
+    //
+    // FusedLocationProviderClient cannot supply this -- it deliberately hides
+    // which technology produced a fix, which is the entire point of it -- so
+    // the count is read straight from the GNSS receiver through
+    // LocationManager, in parallel with the fused updates. The two are
+    // independent: the position stays fused (so it still works indoors off
+    // Wi-Fi), while the chip reports what the satellites are actually doing.
+    //
+    // Zero means "no GNSS status yet", which is the truthful answer for a
+    // network-derived fix, and is what the chip will show for the first
+    // second or two after Start.
+    @Volatile
+    private var satellitesInFix: Int = 0
+    private var gnssCallback: GnssStatus.Callback? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -144,9 +170,22 @@ class NmeaForwardService : Service() {
             }
         }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 3000L)
+        // 1Hz, not the 3s it used to be. Three seconds is 85 metres at
+        // motorway speed: the map jumped a screen-width at a time, the arrow
+        // was always most of a hundred metres behind where you were, and the
+        // distance to the next turn stepped down in 85m increments. Every
+        // consumer of a fix on the dashboard -- the map centre, the snap, the
+        // turn distance, the wrong-way test -- gets three times the
+        // resolution from this one line.
+        //
+        // The cost is battery, and it is smaller than it looks: the GNSS chip
+        // is already tracking continuously to answer at all, so the extra
+        // work is packet assembly and a UDP send, not another fix acquisition.
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateIntervalMillis(1000L)
             .build()
+
+        startGnssStatus()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
@@ -157,6 +196,7 @@ class NmeaForwardService : Service() {
                     altitudeMeters = if (loc.hasAltitude()) loc.altitude else 0.0,
                     speedMps = if (loc.hasSpeed()) loc.speed.toDouble() else 0.0,
                     bearingDeg = if (loc.hasBearing()) loc.bearing.toDouble() else 0.0,
+                    satellitesUsed = satellitesInFix,
                 )
                 sendSentences(sentences)
                 val summary = String.format(
@@ -194,6 +234,7 @@ class NmeaForwardService : Service() {
         locationCallback = null
         udpSocket?.close()
         udpSocket = null
+        stopGnssStatus()
         routeServer?.stop()
         routeServer = null
         announcer?.stop()
@@ -207,6 +248,52 @@ class NmeaForwardService : Service() {
         serviceScope.cancel()
         instance = null
         super.onDestroy()
+    }
+
+    /**
+     * Subscribes to raw GNSS status purely to count the satellites used in the
+     * current fix. Best effort throughout: a device with no GNSS hardware, or
+     * a permission that has been revoked since Start, simply leaves the count
+     * at zero rather than taking the service down with it.
+     */
+    private fun startGnssStatus() {
+        if (gnssCallback != null) return
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        val manager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
+        val callback = object : GnssStatus.Callback() {
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
+                // usedInFix, not the total in view. "In view" counts every
+                // satellite the receiver can hear, including ones too weak or
+                // too low to contribute, and would read high exactly when the
+                // fix is worst -- the opposite of what the chip is for.
+                var used = 0
+                for (i in 0 until status.satelliteCount) {
+                    if (status.usedInFix(i)) used++
+                }
+                satellitesInFix = used
+            }
+        }
+        try {
+            manager.registerGnssStatusCallback(callback, Handler(Looper.getMainLooper()))
+            gnssCallback = callback
+        } catch (e: SecurityException) {
+            Log.w(TAG, "GNSS status unavailable: ${e.message}")
+        }
+    }
+
+    private fun stopGnssStatus() {
+        val callback = gnssCallback ?: return
+        gnssCallback = null
+        satellitesInFix = 0
+        try {
+            val manager = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+            manager?.unregisterGnssStatusCallback(callback)
+        } catch (e: Exception) {
+            // already gone -- nothing to do
+        }
     }
 
     /**

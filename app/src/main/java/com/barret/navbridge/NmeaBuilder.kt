@@ -24,6 +24,7 @@ object NmeaBuilder {
         altitudeMeters: Double,
         speedMps: Double,
         bearingDeg: Double,
+        satellitesUsed: Int = 0,
     ): String {
         val now = Date()
         val timeStr = timeFormat().format(now)
@@ -42,9 +43,17 @@ object NmeaBuilder {
         // Fix quality 1 = "GPS fix". NMEA has no standard "network fix"
         // quality code, so this stays 1 regardless of provider --
         // TinyGPSPlus on the ESP32 side only checks that it's non-zero.
+        //
+        // The satellite count used to be the literal "06". That is why the
+        // dashboard's satellite chip read 6 everywhere, indoors, outdoors and
+        // in an open field: it was faithfully displaying a constant. It now
+        // carries the real count of satellites used in the fix, taken from
+        // GnssStatus in the service, and 00 when that is not yet known -- an
+        // honest zero being considerably more use than a confident six.
         val ggaBody = String.format(
-            Locale.US, "GPGGA,%s,%s,%s,%s,%s,1,06,1.0,%.1f,M,0.0,M,,",
-            timeStr, latStr, latHemi, lonStr, lonHemi, altitudeMeters
+            Locale.US, "GPGGA,%s,%s,%s,%s,%s,1,%02d,1.0,%.1f,M,0.0,M,,",
+            timeStr, latStr, latHemi, lonStr, lonHemi,
+            satellitesUsed.coerceIn(0, 99), altitudeMeters
         )
         val gga = "$" + ggaBody + "*" + checksum(ggaBody) + "\r\n"
 
