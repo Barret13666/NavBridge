@@ -229,7 +229,7 @@ an APK from outside Google Play.
    will not see the persistent notification that the service is running, and
    cues will not reach a band or watch).
 4. From then on it works in the background (with a notification carrying a
-   **Stop** button), sending coordinates every ~3 seconds until you press
+   **Stop** button), sending coordinates about once a second until you press
    Stop, and answering route, turn-instruction and search requests from the
    dashboard along the way. The phone's screen can be switched off — the
    foreground service keeps running.
@@ -242,7 +242,7 @@ an APK from outside Google Play.
 - Accuracy depends on what `FusedLocationProviderClient` managed to produce —
   outdoors that is usually GNSS (a few metres), indoors Wi-Fi/cell (from ~30
   to several hundred metres), exactly as in the phone's own maps app.
-- Coordinates are sent roughly every 3 seconds. The dashboard is designed
+- Coordinates are sent about once a second. The dashboard is designed
   around that interval: its "link lost" and "fix stale" thresholds depend on
   it, and so does how often the distance to the next turn is refreshed.
 - The app is not signed with a release key — it is a debug build, which is
