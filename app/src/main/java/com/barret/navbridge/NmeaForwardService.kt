@@ -348,7 +348,7 @@ class NmeaForwardService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(
                 lastAltitudeM?.let {
-                    String.format(Locale.US, "%s   ALT %.0f m", str(R.string.notif_title), it)
+                    String.format(Locale.US, "%s alt=%.0fm", str(R.string.notif_title), it)
                 } ?: str(R.string.notif_title)
             )
             .setContentText(text)

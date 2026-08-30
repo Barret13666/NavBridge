@@ -24,7 +24,11 @@
     <string name="about">About NavBridge</string>
 
     <!-- notification -->
-    <string name="notif_title">NavBridge is running</string>
+    <!-- Just the name: the altitude is appended to it at runtime, giving
+         "NavBridge alt=142m". The word that used to be here said only that the
+         service was running, which the notification's presence already
+         says. -->
+    <string name="notif_title">NavBridge</string>
     <string name="notif_waiting">waiting for the first fix\u2026</string>
     <string name="notif_address_error">address error: %1$s</string>
     <string name="notif_send_error">send error: %1$s</string>

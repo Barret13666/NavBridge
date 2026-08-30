@@ -20,7 +20,8 @@
     <string name="about">О NavBridge</string>
 
     <!-- notification -->
-    <string name="notif_title">NavBridge работает</string>
+    <!-- Не переводится: это имя плюс высота, дописываемая в рантайме. -->
+    <string name="notif_title">NavBridge</string>
     <string name="notif_waiting">ожидание первой координаты\u2026</string>
     <string name="notif_address_error">ошибка адреса: %1$s</string>
     <string name="notif_send_error">ошибка отправки: %1$s</string>
@@ -67,7 +68,7 @@
     <string name="cue_prepare">Через %2$d метров %1$s</string>
     <string name="cue_now">%1$s</string>
     <string name="cue_arrive">Вы прибыли</string>
-    <string name="cue_reroute">Маршрут перестроен</string>
+    <string name="cue_reroute">Сошли с маршрута. Перестраиваю</string>
     <string name="cue_turn_left">поверните налево</string>
     <string name="cue_turn_right">поверните направо</string>
     <string name="cue_slight_left">держитесь левее</string>
