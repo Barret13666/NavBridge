@@ -115,6 +115,13 @@ class NmeaForwardService : Service() {
     // second or two after Start.
     @Volatile
     private var satellitesInFix: Int = 0
+
+    // Last known altitude, for the notification title. Null when the current
+    // fix has none. Named differently from NmeaBuilder.build()'s
+    // altitudeMeters parameter on purpose -- the two are a line apart at the
+    // call site and confusing them would be easy.
+    @Volatile
+    private var lastAltitudeM: Double? = null
     private var gnssCallback: GnssStatus.Callback? = null
 
     override fun onCreate() {
@@ -202,6 +209,16 @@ class NmeaForwardService : Service() {
                 val summary = String.format(
                     Locale.US, "lat=%.5f lon=%.5f ±%.0fm", loc.latitude, loc.longitude, loc.accuracy
                 )
+                // Altitude moved here from the dashboard, where its chip is now
+                // the selected gear. It goes on the TITLE line rather than into
+                // the body: the body is already a full line of coordinates, and
+                // a notification's title is what a watch or a lock screen shows
+                // when it has room for one line only.
+                //
+                // Only when the fix actually carries an altitude -- a network
+                // fix often does not, and "ALT 0 m" would be a fabricated
+                // number rather than a missing one.
+                lastAltitudeM = if (loc.hasAltitude()) loc.altitude else null
                 updateNotification(summary)
             }
         }
@@ -234,6 +251,7 @@ class NmeaForwardService : Service() {
         locationCallback = null
         udpSocket?.close()
         udpSocket = null
+        lastAltitudeM = null
         stopGnssStatus()
         routeServer?.stop()
         routeServer = null
@@ -328,7 +346,11 @@ class NmeaForwardService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(str(R.string.notif_title))
+            .setContentTitle(
+                lastAltitudeM?.let {
+                    String.format(Locale.US, "%s   ALT %.0f m", str(R.string.notif_title), it)
+                } ?: str(R.string.notif_title)
+            )
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
