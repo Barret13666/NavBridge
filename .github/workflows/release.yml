@@ -16,6 +16,12 @@ name: Release APK
 # NavBridge-v1.0.0.apk attached, plus auto-generated release notes (the list of
 # commits since the previous tag).
 #
+# Re-running for a tag that already has a release is fine: the old release and
+# the old tag are both removed, the tag is recreated at the commit this run
+# built, and a fresh release is published on it. Nothing stale survives --
+# neither an APK from the previous build nor a cached source archive from
+# before the tag was moved.
+#
 # Can also be run by hand from the Actions tab ("Run workflow") without
 # pushing a new tag -- e.g. to re-publish a release after fixing something
 # about the release itself, not the app. When run this way, pick the tag to
@@ -42,11 +48,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      # Запрашиваем всю историю (fetch-depth: 0), чтобы корректно работало 
-      # удаление/создание тегов и генерация заметок релиза.
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Resolve release tag
         id: tag
@@ -60,24 +62,6 @@ jobs:
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      # Пересоздаем тег на сервере только при ручном запуске (workflow_dispatch).
-      # Это заставит GitHub пересобрать архивы исходного кода (Source code zip) из нового состояния кода.
-      - name: Force update git tag (on manual run)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@://github.com"
-          
-          # Безопасно удаляем тег локально и удаленно, если он уже существовал
-          git tag -d "$TAG" || true
-          git push origin :refs/tags/"$TAG" || true
-          
-          # Создаем тег заново на текущем коммите и принудительно отправляем в репозиторий
-          git tag "$TAG"
-          git push origin "$TAG" --force
 
       # Same build steps as build.yml -- see that file for why each one is
       # here (no checked-in gradlew, so setup-gradle is what actually
@@ -102,8 +86,28 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # gradle.properties carries the version for every other kind of build;
+      # here the tag overrides it, so the number inside the APK is the same
+      # string used to name the file and the release below and cannot end up
+      # disagreeing with the download button.
+      #
+      # The check is separate from the override on purpose: overriding alone
+      # would let gradle.properties quietly rot, and then every local and
+      # every debug build would report a version that has not been true for
+      # months. A warning rather than a failure -- the release itself is
+      # correct either way, and stopping a release over a bookkeeping slip
+      # would be the wrong trade at the moment you are trying to ship.
+      - name: Check the declared version matches the tag
+        run: |
+          DECLARED=$(sed -n 's/^navBridgeVersionName=//p' gradle.properties | tr -d '[:space:]')
+          EXPECTED="${{ steps.tag.outputs.tag }}"
+          EXPECTED="${EXPECTED#v}"
+          if [ "$DECLARED" != "$EXPECTED" ]; then
+            echo "::warning::gradle.properties says navBridgeVersionName=$DECLARED but this release is $EXPECTED. The APK will say $EXPECTED; please bump gradle.properties so local and debug builds agree."
+          fi
+
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace -PnavBridgeVersionName=${{ steps.tag.outputs.tag }}
 
       - name: Rename APK to include the version
         run: |
@@ -114,14 +118,50 @@ jobs:
       # action needed just to create a release. --generate-notes asks GitHub
       # to write the notes itself (commit list since the previous release),
       # same as clicking "Generate release notes" in the web UI.
-      # Флаг --clobber позволяет перезаписывать APK файл, если релиз уже создан.
-      # Если релиза еще нет, "gh release create" создаст его с нуля.
-      - name: Create or Update GitHub Release
+      #
+      # A NEW TAG STILL TAKES THE SIMPLE PATH: the `else` branch below is the
+      # original behaviour, untouched. Everything above it only runs when a
+      # release for this tag already exists.
+      #
+      # RE-RELEASING AN EXISTING TAG. `gh release create` fails outright if
+      # the release is already there, which is exactly the case when you fix
+      # something and push the tag again. The release AND the tag are deleted
+      # and both are recreated from the commit this run checked out.
+      #
+      # Deleting the tag as well is the part that matters, and it is worth
+      # spelling out why. Asset files could be cleared without it, but
+      # "Source code (zip)" and "Source code (tar.gz)" are not assets: GitHub
+      # builds them from the tag and CACHES them per tag name. Move a tag to a
+      # new commit and those two links can keep serving the old snapshot for
+      # some time, so the APK on the page and the source next to it disagree
+      # about what was built. Removing the tag drops that cache; recreating it
+      # at the same commit brings the links back pointing at the right tree.
+      #
+      # --cleanup-tag does both deletions in one step. Recreating the tag from
+      # a workflow does not re-trigger this workflow: pushes made with
+      # GITHUB_TOKEN deliberately do not fire further workflow runs, so there
+      # is no loop here.
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.tag.outputs.tag }}" \
-            "release/NavBridge-${{ steps.tag.outputs.tag }}.apk" \
-            --title "NavBridge ${{ steps.tag.outputs.tag }}" \
-            --generate-notes \
-            --clobber
+          TAG="${{ steps.tag.outputs.tag }}"
+          APK="release/NavBridge-$TAG.apk"
+          SHA="${{ github.sha }}"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists -- removing it and its tag, then rebuilding both."
+
+            # Deletes the release and the tag together. The tag is put back
+            # immediately below, at the same commit, so nothing is lost.
+            gh release delete "$TAG" --yes --cleanup-tag
+
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -f "$TAG" "$SHA"
+            git push --force origin "refs/tags/$TAG"
+          fi
+
+          gh release create "$TAG" "$APK" \
+            --title "NavBridge $TAG" \
+            --generate-notes
