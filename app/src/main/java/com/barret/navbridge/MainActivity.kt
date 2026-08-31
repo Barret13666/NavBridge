@@ -33,19 +33,9 @@ class MainActivity : LocaleAwareActivity() {
         setContentView(binding.root)
         prefs = getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE)
 
-        // The version goes in the action bar, which is the topmost thing on
-        // the screen and already says the app's name -- so this adds the one
-        // piece of information that was missing rather than repeating the
-        // name a second time lower down.
-        //
-        // Trimmed because versionLabel() returns an empty string if the
-        // package cannot be read: better a bare name than a name with a
-        // dangling space after it.
-        supportActionBar?.title = getString(
-            R.string.title_with_version,
-            getString(R.string.app_name),
-            AppInfo.versionLabel(this),
-        ).trim()
+        // The action bar keeps the plain app name. The version used to be
+        // appended here; it is still one tap away on the About screen, which
+        // is where someone actually goes looking for it.
 
         binding.etIp.setText(prefs.getString("esp32_ip", "192.168.4.1"))
         binding.etPort.setText(prefs.getString("esp32_port", "10110"))
