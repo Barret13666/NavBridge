@@ -188,8 +188,15 @@ class NmeaForwardService : Service() {
         // The cost is battery, and it is smaller than it looks: the GNSS chip
         // is already tracking continuously to answer at all, so the extra
         // work is packet assembly and a UDP send, not another fix acquisition.
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMinUpdateIntervalMillis(1000L)
+        // 2Hz. Both numbers are the interval in milliseconds: the first is what
+        // is asked for, the second the fastest that will be accepted. Setting
+        // them equal pins the rate rather than letting the provider drift.
+        //
+        // The fused provider will not always deliver this -- it hands out what
+        // the hardware and the current power state allow -- so treat 500 as a
+        // ceiling rather than a promise.
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500L)
+            .setMinUpdateIntervalMillis(500L)
             .build()
 
         startGnssStatus()
