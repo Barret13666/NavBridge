@@ -70,11 +70,44 @@ class MainActivity : LocaleAwareActivity() {
         binding.btnAbout.setOnClickListener {
             startActivity(Intent(this, AboutActivity::class.java))
         }
+
+        // The proxy switch. Its state is a preference, so it survives the
+        // service being stopped and restarted, and the service reads it both
+        // on start and whenever this toggles.
+        binding.switchProxy.isChecked =
+            prefs.getBoolean(HttpProxyServer.KEY_PROXY_ENABLED, false)
+        binding.switchProxy.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean(HttpProxyServer.KEY_PROXY_ENABLED, checked).apply()
+            NmeaForwardService.refreshProxy()
+            // Posted rather than called directly: the service starts the
+            // listener on another thread, and asking whether it is up in the
+            // same breath as telling it to start would usually get "no".
+            binding.switchProxy.postDelayed({ updateProxyStatus() }, 300)
+        }
+        updateProxyStatus()
     }
 
     override fun onResume() {
         super.onResume()
         updateButtonLabel(NmeaForwardService.isRunning)
+        updateProxyStatus()
+    }
+
+    /**
+     * The line under the switch. Four states, because "on" alone would not
+     * distinguish the two that matter: a proxy that is listening from one that
+     * could not take the port, and a switch that is on while the service it
+     * runs inside is stopped.
+     */
+    private fun updateProxyStatus() {
+        val port = HttpProxyServer.DEFAULT_PORT
+        val wanted = binding.switchProxy.isChecked
+        binding.tvProxyStatus.text = when {
+            !wanted -> getString(R.string.proxy_port, port)
+            !NmeaForwardService.isRunning -> getString(R.string.proxy_needs_start, port)
+            NmeaForwardService.proxyRunning -> getString(R.string.proxy_port_running, port)
+            else -> getString(R.string.proxy_port_failed, port)
+        }
     }
 
     private fun saveSettings() {
@@ -113,6 +146,7 @@ class MainActivity : LocaleAwareActivity() {
         ContextCompat.startForegroundService(this, intent)
         updateButtonLabel(true)
         binding.tvStatus.text = getString(R.string.status_running, ip, port)
+        binding.btnStartStop.postDelayed({ updateProxyStatus() }, 500)
     }
 
     private fun stopForwarding() {
@@ -122,6 +156,7 @@ class MainActivity : LocaleAwareActivity() {
         startService(intent)
         updateButtonLabel(false)
         binding.tvStatus.text = getString(R.string.status_stopped)
+        updateProxyStatus()
     }
 
     private fun updateButtonLabel(running: Boolean) {

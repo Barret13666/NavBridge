@@ -17,6 +17,11 @@
     <string name="status_stopped">Остановлено</string>
     <string name="status_permission_denied">Нужно разрешение на геолокацию</string>
     <string name="settings">Настройки</string>
+    <string name="label_http_proxy">HTTP-прокси</string>
+    <string name="proxy_port">Порт: %1$d</string>
+    <string name="proxy_port_running">Порт: %1$d \u2014 работает</string>
+    <string name="proxy_port_failed">Порт %1$d занят \u2014 закройте другое прокси-приложение</string>
+    <string name="proxy_needs_start">Порт: %1$d \u2014 запустится вместе со службой</string>
     <string name="about">О NavBridge</string>
 
     <!-- notification -->
@@ -68,7 +73,7 @@
     <string name="cue_prepare">Через %2$d метров %1$s</string>
     <string name="cue_now">%1$s</string>
     <string name="cue_arrive">Вы прибыли</string>
-    <string name="cue_reroute">Маршрут перестроен</string>
+    <string name="cue_reroute">Сошли с маршрута. Перестраиваю</string>
     <string name="cue_turn_left">поверните налево</string>
     <string name="cue_turn_right">поверните направо</string>
     <string name="cue_slight_left">держитесь левее</string>

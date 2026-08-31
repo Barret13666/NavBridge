@@ -63,6 +63,16 @@ class NmeaForwardService : Service() {
         var isRunning = false
             private set
 
+        /** Whether the proxy is actually listening, for the main screen. */
+        @Volatile
+        var proxyRunning = false
+            internal set
+
+        /** Re-reads the proxy switch; called when it is toggled. */
+        fun refreshProxy() {
+            instance?.startProxyIfEnabled()
+        }
+
         // The running instance, so the Settings screen can tell it the
         // language changed. Weak coupling on purpose: a null here just means
         // forwarding is not running, which is a perfectly normal state for
@@ -100,6 +110,12 @@ class NmeaForwardService : Service() {
     // screen off and the app in the background -- which is the entire point of
     // them.
     private var announcer: TurnCueAnnouncer? = null
+
+    // The HTTP proxy the dashboard uses to reach the internet through this
+    // phone. Lives in the service rather than the Activity because it has to
+    // keep listening with the screen off -- which is the only state it is ever
+    // really used in.
+    private var proxy: HttpProxyServer? = null
 
     // Real satellite count, for the dashboard's satellite chip.
     //
@@ -200,6 +216,7 @@ class NmeaForwardService : Service() {
             .build()
 
         startGnssStatus()
+        startProxyIfEnabled()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
@@ -260,6 +277,8 @@ class NmeaForwardService : Service() {
         udpSocket = null
         lastAltitudeM = null
         stopGnssStatus()
+        proxy?.stop()
+        proxy = null
         routeServer?.stop()
         routeServer = null
         announcer?.stop()
@@ -273,6 +292,33 @@ class NmeaForwardService : Service() {
         serviceScope.cancel()
         instance = null
         super.onDestroy()
+    }
+
+    /**
+     * Starts the proxy if the switch is on, and reports the outcome so the
+     * main screen can show it.
+     *
+     * A failure here is nearly always the port being taken -- another proxy
+     * app still running, or a previous instance of this one that has not let
+     * go yet. Worth saying rather than leaving the switch on over a server
+     * that is not listening.
+     */
+    fun startProxyIfEnabled() {
+        // Same preferences file the rest of the app uses -- HttpProxyServer
+        // declares the key, LocaleHelper declares the file name, and they
+        // agree on the value.
+        val prefs = getSharedPreferences(LocaleHelper.PREFS, MODE_PRIVATE)
+        val wanted = prefs.getBoolean(HttpProxyServer.KEY_PROXY_ENABLED, false)
+        if (!wanted) {
+            proxy?.stop()
+            proxy = null
+            proxyRunning = false
+            return
+        }
+        if (proxy?.running == true) return
+        val server = HttpProxyServer()
+        proxyRunning = server.start()
+        proxy = if (proxyRunning) server else null
     }
 
     /**

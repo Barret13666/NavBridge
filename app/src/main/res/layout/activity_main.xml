@@ -50,6 +50,27 @@
         android:layout_marginTop="24dp"
         android:textAlignment="center" />
 
+    <!--
+        The proxy row. No host field and no edit affordance: the server binds
+        to every interface, and the dashboard already knows this phone's
+        address from the GPS packets it receives, so there is nothing here for
+        anyone to type or get wrong.
+    -->
+    <com.google.android.material.materialswitch.MaterialSwitch
+        android:id="@+id/switchProxy"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="28dp"
+        android:text="@string/label_http_proxy" />
+
+    <TextView
+        android:id="@+id/tvProxyStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:textSize="12sp"
+        android:alpha="0.7" />
+
     <View
         android:layout_width="0dp"
         android:layout_height="0dp"
