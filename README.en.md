@@ -7,7 +7,7 @@
 
 # NavBridge
 
-An Android app for an ESP32-based vehicle dashboard. It does four things:
+An Android app for an ESP32-based vehicle dashboard. It does five things:
 
 1. Takes the phone's location through `FusedLocationProviderClient` (the same
    API Google Maps itself uses — it picks the best source on its own: real
@@ -22,11 +22,18 @@ An Android app for an ESP32-based vehicle dashboard. It does four things:
    The dashboard draws the manoeuvre arrow and the distance to it.
 4. Searches for addresses for the magnifier button on the navigation screen,
    through the open **Photon** geocoder — online, no key, no sign-up.
+5. Can act as an **HTTP proxy** for the dashboard, so it reaches the internet
+   through the phone rather than through its own connection. Useful when map
+   tiles or the update server are blocked where you are.
 
 Routing, turn instructions and search all share UDP port **10111** and answer
 the dashboard's requests automatically for as long as the service is running.
 
 ## What's new in this version
+
+- **An HTTP proxy for the dashboard** — a switch on the main screen. The
+  dashboard reaches the internet through the phone, and therefore through your
+  VPN. A separate proxy app is no longer needed. Details in the section below.
 
 - **Settings** (button on the main screen). The routing profile moved there,
   along with the interface language and the turn guidance options. There is
@@ -210,6 +217,48 @@ answer: "no results" — nothing found, try differently; "rate limited, wait
 15s" — too often, wait; "network: ..." — no internet on the phone; "no
 response from phone (app running?)" — the NavBridge service is not running.
 
+## HTTP proxy
+
+**Why.** An Android VPN does not cover devices connected through the phone:
+the tunnel is per-app, and the dashboard is not an app. It reaches the network
+directly and meets whatever the phone would meet with the VPN switched off.
+NavBridge *is* an app, so its own sockets do go through the VPN — and anything
+the dashboard sends through this proxy takes the same route as the phone's own
+traffic.
+
+A separate proxy app is no longer needed for this.
+
+**Turning it on.** The **HTTP proxy** switch on the main screen. The line under
+it reports the state:
+
+| Line | Meaning |
+|---|---|
+| `Port: 8080` | off |
+| `Port: 8080 — starts with the service` | on, but the service is stopped |
+| `Port: 8080 — running` | listening, all good |
+| `Port 8080 is busy` | another app holds the port |
+
+The last almost always means another proxy app is still running: two servers
+cannot share one port. Close it.
+
+No address has to be entered, here or on the dashboard. The server listens on
+every interface, and the dashboard learns the phone's address from the GPS
+packets it already receives.
+
+**On the dashboard**, the proxy is switched on with the **Proxy** toggle in the
+Wi-Fi window (fourth screen). Everything the dashboard does on the network goes
+through it: map tiles, the update check, the bot and the IP lookup. The setting
+lives in `/navproxy.txt` on the card and survives a reboot.
+
+**Checking that it works.** On the dashboard's update screen, the `exit IP:`
+line shows the address the request left the internet from. If that is the VPN's
+exit rather than your ordinary carrier address, the chain dashboard → NavBridge
+→ VPN is wired up correctly.
+
+How it works: `CONNECT` opens a tunnel and copies bytes both ways without
+looking at them, so TLS stays end to end between the dashboard and the far
+server — the phone only ever sees ciphertext.
+
 ## Installing
 
 Download the latest `NavBridge-*.apk` from the
@@ -229,7 +278,7 @@ an APK from outside Google Play.
    will not see the persistent notification that the service is running, and
    cues will not reach a band or watch).
 4. From then on it works in the background (with a notification carrying a
-   **Stop** button), sending coordinates about once a second until you press
+   **Stop** button), sending coordinates about twice a second until you press
    Stop, and answering route, turn-instruction and search requests from the
    dashboard along the way. The phone's screen can be switched off — the
    foreground service keeps running.
@@ -242,7 +291,7 @@ an APK from outside Google Play.
 - Accuracy depends on what `FusedLocationProviderClient` managed to produce —
   outdoors that is usually GNSS (a few metres), indoors Wi-Fi/cell (from ~30
   to several hundred metres), exactly as in the phone's own maps app.
-- Coordinates are sent about once a second. The dashboard is designed
+- Coordinates are sent about twice a second. The dashboard is designed
   around that interval: its "link lost" and "fix stale" thresholds depend on
   it, and so does how often the distance to the next turn is refreshed.
 - The app is not signed with a release key — it is a debug build, which is
