@@ -9,7 +9,7 @@
     -->
 
     <!-- main screen -->
-    <string name="hint_ip">IP адрес ESP32 (например 192.168.4.1)</string>
+    <string name="hint_ip">IP адрес дисплея</string>
     <string name="hint_port">UDP порт</string>
     <string name="start">Старт</string>
     <string name="stop">Стоп</string>
