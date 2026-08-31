@@ -42,7 +42,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      # Запрашиваем всю историю (fetch-depth: 0), чтобы корректно работало 
+      # удаление/создание тегов и генерация заметок релиза.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve release tag
         id: tag
@@ -56,6 +60,24 @@ jobs:
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Пересоздаем тег на сервере только при ручном запуске (workflow_dispatch).
+      # Это заставит GitHub пересобрать архивы исходного кода (Source code zip) из нового состояния кода.
+      - name: Force update git tag (on manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@://github.com"
+          
+          # Безопасно удаляем тег локально и удаленно, если он уже существовал
+          git tag -d "$TAG" || true
+          git push origin :refs/tags/"$TAG" || true
+          
+          # Создаем тег заново на текущем коммите и принудительно отправляем в репозиторий
+          git tag "$TAG"
+          git push origin "$TAG" --force
 
       # Same build steps as build.yml -- see that file for why each one is
       # here (no checked-in gradlew, so setup-gradle is what actually
@@ -92,11 +114,14 @@ jobs:
       # action needed just to create a release. --generate-notes asks GitHub
       # to write the notes itself (commit list since the previous release),
       # same as clicking "Generate release notes" in the web UI.
-      - name: Create GitHub Release
+      # Флаг --clobber позволяет перезаписывать APK файл, если релиз уже создан.
+      # Если релиза еще нет, "gh release create" создаст его с нуля.
+      - name: Create or Update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.tag.outputs.tag }}" \
             "release/NavBridge-${{ steps.tag.outputs.tag }}.apk" \
             --title "NavBridge ${{ steps.tag.outputs.tag }}" \
-            --generate-notes
+            --generate-notes \
+            --clobber
