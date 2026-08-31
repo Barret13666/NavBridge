@@ -68,7 +68,7 @@
     <string name="cue_prepare">Через %2$d метров %1$s</string>
     <string name="cue_now">%1$s</string>
     <string name="cue_arrive">Вы прибыли</string>
-    <string name="cue_reroute">Сошли с маршрута. Перестраиваю</string>
+    <string name="cue_reroute">Маршрут перестроен</string>
     <string name="cue_turn_left">поверните налево</string>
     <string name="cue_turn_right">поверните направо</string>
     <string name="cue_slight_left">держитесь левее</string>
