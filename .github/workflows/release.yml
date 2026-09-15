@@ -107,8 +107,17 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # -P hands the tag to build.gradle's resolveVersionName, which strips
+      # the leading "v". Without it the APK reports whatever
+      # navBridgeVersionName happens to say in gradle.properties, which is a
+      # hand-edited line and therefore the one thing in this pipeline that can
+      # silently fall behind -- an APK downloaded as NavBridge-v1.0.7.apk
+      # showing 1.0.6 on the About screen. app/build.gradle's comment already
+      # describes this override as the reason a published APK cannot disagree
+      # with its own download name; this is the flag that was supposed to make
+      # that true.
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace -PnavBridgeVersionName="${{ steps.tag.outputs.tag }}"
 
       - name: Rename APK to include the version
         run: |
@@ -119,14 +128,34 @@ jobs:
       # action needed just to create a release. --generate-notes asks GitHub
       # to write the notes itself (commit list since the previous release),
       # same as clicking "Generate release notes" in the web UI.
-      # Флаг --clobber позволяет перезаписывать APK файл, если релиз уже создан.
-      # Если релиза еще нет, "gh release create" создаст его с нуля.
-      - name: Create or Update GitHub Release
+      #
+      # Two commands, not one, because --clobber belongs to `gh release
+      # upload` and does not exist on `gh release create` -- passing it there
+      # fails with "unknown flag: --clobber" before anything is published.
+      # `create` also refuses outright when the release already exists, which
+      # is exactly the re-publish case the manual run is for, so the two cases
+      # have to be told apart up front:
+      #
+      #   release absent  -> create it, with the APK and generated notes
+      #   release present -> upload the APK over the old one (--clobber)
+      #
+      # Note what the second branch does NOT do: regenerate the release notes.
+      # `gh release upload` only touches assets. That is usually what you
+      # want on a re-publish (the commits have not changed, only the build
+      # has); when it is not, delete the release in the web UI and run this
+      # again, and it will take the create path.
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ steps.tag.outputs.tag }}" \
-            "release/NavBridge-${{ steps.tag.outputs.tag }}.apk" \
-            --title "NavBridge ${{ steps.tag.outputs.tag }}" \
-            --generate-notes \
-            --clobber
+          TAG="${{ steps.tag.outputs.tag }}"
+          APK="release/NavBridge-$TAG.apk"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists -- replacing its APK."
+            gh release upload "$TAG" "$APK" --clobber
+          else
+            echo "Release $TAG does not exist yet -- creating it."
+            gh release create "$TAG" "$APK" \
+              --title "NavBridge $TAG" \
+              --generate-notes
+          fi
