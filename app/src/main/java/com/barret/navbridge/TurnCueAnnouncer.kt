@@ -407,6 +407,15 @@ class TurnCueAnnouncer(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            // Same destination as the status notification's tap. A cue that
+            // was half-heard is the moment someone reaches for the phone, and
+            // without this the cue is the one notification on the screen that
+            // does nothing when pressed. setAutoCancel(true) below means the
+            // tap also clears it, which is right: a cue is a moment, not a
+            // state, and it is about to time out anyway.
+            .setContentIntent(
+                MainActivity.openAppPendingIntent(context, MainActivity.RC_OPEN_FROM_CUE)
+            )
             .setSilent(true)
             .setOnlyAlertOnce(false)
             .setAutoCancel(true)

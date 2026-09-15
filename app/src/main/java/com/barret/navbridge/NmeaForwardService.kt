@@ -398,6 +398,15 @@ class NmeaForwardService : Service() {
             this, 0, stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
+        // Tapping the body of the notification opens the app, which is what
+        // every notification on the phone does and therefore what the user
+        // will try without being told. The intent itself is built in
+        // MainActivity.openAppPendingIntent, shared with the turn-cue
+        // notification so both taps land in the same place.
+        val openPendingIntent =
+            MainActivity.openAppPendingIntent(this, MainActivity.RC_OPEN_FROM_STATUS)
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(
                 lastAltitudeM?.let {
@@ -406,6 +415,7 @@ class NmeaForwardService : Service() {
             )
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(openPendingIntent)
             .setOngoing(true)
             .addAction(R.drawable.ic_notification, str(R.string.stop), stopPendingIntent)
             .build()

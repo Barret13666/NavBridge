@@ -1,6 +1,8 @@
 package com.barret.navbridge
 
 import android.Manifest
+import android.app.PendingIntent
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -151,5 +153,42 @@ class MainActivity : LocaleAwareActivity() {
 
     private fun updateButtonLabel(running: Boolean) {
         binding.btnStartStop.text = if (running) getString(R.string.stop) else getString(R.string.start)
+    }
+
+    companion object {
+        /**
+         * Request codes for [openAppPendingIntent]. One per notification that
+         * offers the tap, because a PendingIntent is identified by its request
+         * code plus its intent: two callers sharing a code would be handed the
+         * same object, and under FLAG_UPDATE_CURRENT either could quietly
+         * rewrite the other's.
+         */
+        const val RC_OPEN_FROM_STATUS = 1
+        const val RC_OPEN_FROM_CUE = 2
+
+        /**
+         * A PendingIntent that opens this screen, for the app's notifications
+         * to hang off.
+         *
+         * ACTION_MAIN + CATEGORY_LAUNCHER rather than a bare component intent:
+         * this is the same intent the launcher icon fires, so an app already
+         * running in the background is brought forward with its state intact
+         * (the typed IP, the proxy switch) instead of a second copy of this
+         * screen being stacked on the first. Both notifications that use this
+         * are posted during a ride, with the app almost always still alive in
+         * the background, so that is the common case rather than the corner
+         * one.
+         */
+        fun openAppPendingIntent(context: Context, requestCode: Int): PendingIntent {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            return PendingIntent.getActivity(
+                context, requestCode, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
     }
 }
