@@ -17,8 +17,25 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      # packages: '' is load-bearing, not tidiness. The action's own default
+      # for this input is "tools platform-tools", and Google removed the
+      # obsolete "tools" package from the SDK repository on 2026-09-14.
+      # Current sdkmanager builds exit 1 on an unknown package instead of
+      # warning and carrying on, so a bare `uses:` here fails the job about
+      # twenty seconds in, before any of our code is touched:
+      #
+      #     Warning: Failed to find package 'tools'
+      #     Error: The process '.../sdkmanager' failed with exit code 1
+      #
+      # Bumping the action does not help -- v4 declares the same default.
+      # Empty means the action still creates ANDROID_HOME, accepts the
+      # licenses and puts sdkmanager on PATH; it just installs nothing, which
+      # costs us nothing because the next step names everything this build
+      # actually needs.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install required SDK packages
         run: |
